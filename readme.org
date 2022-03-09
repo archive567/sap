@@ -1,0 +1,1224 @@
+
+* sap
+
+[[https://hackage.haskell.org/package/sap][https://img.shields.io/hackage/v/sap.svg]]
+[[https://github.com/tonyday567/sap/actions?query=workflow%3Ahaskell-ci][https://github.com/tonyday567/sap/workflows/haskell-ci/badge.svg]]
+
+~super auto pet~
+
+https://superauto.pet/
+
+https://github.com/bencoveney/super-auto-pets-db
+
+json from superauto.pet/api.json
+
+#+begin_quote
+export type Pack = "StandardPack" | "ExpansionPack1";
+
+export interface Pet {
+  // The name of the pet.
+  name: String;
+  // The tier the pet appears in.
+  tier: number;
+  // The standard starting attack points for the pet.
+  baseAttack: number;
+  // The standard starting health points for the pet.
+  baseHealth: number;
+  // Which packs the pet appears in.
+  packs?: Pack[];
+  // The ability the pet has at level 1.
+  level1Ability?: Ability;
+  // The ability the pet has at level 2.
+  level2Ability?: Ability;
+  // The ability the pet has at level 3.
+  level3Ability?: Ability;
+}
+
+export interface Ability {
+  // The text description of the ability.
+  description: string;
+  // What behaviour (by the trigger entity) will initiate the ability.
+  trigger: Trigger;
+  // Which entity will trigger the effect.
+  triggeredBy: Target;
+  // What the effect does.
+  effect: Effect;
+}
+#+end_quote
+
+* Exploration of JSON data
+** haskell setup
+
+#+begin_src haskell :results output
+:r
+:set prompt "> "
+:set -Wno-type-defaults
+:set -Wno-name-shadowing
+:set -XOverloadedStrings
+#+end_src
+
+#+RESULTS:
+
+check
+
+#+begin_src haskell :results output :export both
+let x = "ok"
+putStrLn x
+#+end_src
+
+#+RESULTS:
+:
+: ok
+
+We have a partial schema and could create a data type to match the data but it is far easier to go top down and just inspect the Value out of aeson, and then clean up afterwards:
+
+#+begin_src haskell
+import Prelude hiding (lookup)
+import Sap
+import Data.Aeson
+import qualified Data.ByteString.Lazy as B
+import qualified Data.List as List
+import qualified Data.Map.Strict as Map
+import GHC.Generics
+import qualified Data.Aeson.KeyMap as A
+import Data.Aeson.Types
+import qualified Data.Text as Text
+import qualified Data.Vector as V
+#+end_src
+
+** json file
+
+#+begin_src haskell
+(Just (Object v)) <- decode <$> B.readFile "other/sap.json" :: IO (Maybe Value)
+(Just (Object fs)) = lookup "foods" v
+(Just (Object ps)) = lookup "pets" v
+(Just (Object ss)) = lookup "statuses" v
+(Just (Object ts)) = lookup "turns" v
+#+end_src
+
+#+RESULTS:
+: <interactive>:462:1: warning: [-Wincomplete-uni-patterns]
+:     Pattern match(es) are non-exhaustive
+:     In a pattern binding:
+:         Patterns not matched:
+:             Just (Array _)
+:             Just (String _)
+:             Just (Number _)
+:             Just (Bool _)
+:             ...
+
+** high level anaysis
+#+begin_src haskell :results output
+keys v
+take 200 $ show v
+#+end_src
+
+#+RESULTS:
+: ["foods","pets","statuses","turns"]
+: fromList [(\"foods\",Object (fromList [(\"food-apple\",Object (fromList [(\"ability\",Object (fromList [(\"description\",String \"Give an animal +1/+1.\"),(\"effect\",Object (fromList [(\"attackAmount\",Number 1.0)
+
+** main keys
+
+So there are 4 main data sections.
+
+*** food
+
+A quick peek at each section:
+
+#+begin_src haskell
+(Just (Object fs)) = lookup "foods" v
+keys fs
+#+end_src
+
+#+RESULTS:
+| food-apple | food-canned-food | food-chili | food-chocolate | food-cupcake | food-garlic | food-honey | food-meat-bone | food-melon | food-milk | food-mushroom | food-pear | food-pizza | food-salad-bowl | food-sleeping-pill | food-steak | food-sushi |
+
+#+begin_src haskell
+(Just (Object fa)) = Data.Aeson.KeyMap.lookup "food-apple" fs
+#+end_src
+
+#+RESULTS:
+: <interactive>:33:1-61: warning: [-Wincomplete-uni-patterns]
+:     Pattern match(es) are non-exhaustive
+:     In a pattern binding:
+:         Patterns not matched:
+:             Just (Array _)
+:             Just (String _)
+:             Just (Number _)
+:             Just (Bool _)
+:             ...
+
+#+begin_src haskell
+keys fa
+#+end_src
+
+#+RESULTS:
+| ability | id | image | name | packs | probabilities | tier |
+
+#+begin_src haskell
+Data.Aeson.KeyMap.lookup "ability" fa
+#+end_src
+
+#+RESULTS:
+: Just (Object (fromList [("description",String "Give an animal +1/+1."),("effect",Object (fromList [("attackAmount",Number 1.0),("healthAmount",Number 1.0),("kind",String "ModifyStats"),("target",Object (fromList [("kind",String "PurchaseTarget")])),("untilEndOfBattle",Bool False)])),("trigger",String "Buy"),("triggeredBy",Object (fromList [("kind",String "Self")]))]))
+
+*** pet
+
+#+begin_src haskell
+(Just (Object ps)) = lookup "pets" v
+keys ps
+#+end_src
+
+#+RESULTS:
+| pet-ant | pet-badger | pet-bat | pet-beaver | pet-bee | pet-beetle | pet-bison | pet-blowfish | pet-bluebird | pet-boar | pet-buffalo | pet-bus | pet-butterfly | pet-camel | pet-cat | pet-caterpillar | pet-chick | pet-chicken | pet-cow | pet-crab | pet-cricket | pet-crocodile | pet-deer | pet-dirty-rat | pet-dodo | pet-dog | pet-dolphin | pet-dragon | pet-dromedary | pet-duck | pet-eagle | pet-elephant | pet-fish | pet-flamingo | pet-fly | pet-giraffe | pet-goat | pet-gorilla | pet-hatching-chick | pet-hedgehog | pet-hippo | pet-horse | pet-kangaroo | pet-ladybug | pet-leopard | pet-llama | pet-lobster | pet-mammoth | pet-microbe | pet-monkey | pet-mosquito | pet-octopus | pet-otter | pet-owl | pet-ox | pet-parrot | pet-peacock | pet-penguin | pet-pig | pet-poodle | pet-puppy | pet-rabbit | pet-ram | pet-rat | pet-rhino | pet-rooster | pet-sauropod | pet-scorpion | pet-seal | pet-shark | pet-sheep | pet-shrimp | pet-skunk | pet-sloth | pet-snail | pet-snake | pet-spider | pet-squirrel | pet-swan | pet-tabby-cat | pet-tiger | pet-tropical-fish | pet-turkey | pet-turtle | pet-tyrannosaurus | pet-whale | pet-worm | pet-zombie-cricket | pet-zombie-fly |
+
+#+begin_src haskell
+(Just (Object pa)) = Data.Aeson.KeyMap.lookup "pet-ant" ps
+#+end_src
+
+#+RESULTS:
+: <interactive>:79:1-58: warning: [-Wincomplete-uni-patterns]
+:     Pattern match(es) are non-exhaustive
+:     In a pattern binding:
+:         Patterns not matched:
+:             Just (Array _)
+:             Just (String _)
+:             Just (Number _)
+:             Just (Bool _)
+:             ...
+
+#+begin_src haskell
+keys pa
+#+end_src
+
+#+RESULTS:
+| baseAttack | baseHealth | id | image | level1Ability | level2Ability | level3Ability | name | packs | probabilities | tier |
+
+#+begin_src haskell
+Data.Aeson.KeyMap.lookup "id" pa
+#+end_src
+
+#+RESULTS:
+: Just (String "pet-ant")
+
+*** status
+
+#+begin_src haskell
+(Just (Object ss)) = lookup "statuses" v
+keys ss
+#+end_src
+
+#+RESULTS:
+| status-bone-attack | status-coconut-shield | status-extra-life | status-garlic-armor | status-honey-bee | status-melon-armor | status-poison-attack | status-splash-attack | status-steak-attack | status-weak |
+
+#+begin_src haskell
+Data.Aeson.KeyMap.lookup "status-bone-attack" ss
+#+end_src
+
+#+RESULTS:
+: Just (Object (fromList [("ability",Object (fromList [("description",String "Attack for 5 more damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number 5.0),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))])),("id",String "status-bone-attack"),("image",Object (fromList [("commit",String "793a6a93f303c08877dd6eb589b2fabb3d1c45ee"),("source",String "twemoji"),("unicodeCodePoint",String "\127830")])),("name",String "Bone Attack")]))
+
+#+begin_src haskell
+(Just (Object sba)) = Data.Aeson.KeyMap.lookup "status-bone-attack" ss
+keys sba
+#+end_src
+
+#+RESULTS:
+| ability | id | image | name |
+
+#+begin_src haskell
+keys . snd <$> [(k,m) | (k, Object m) <- toList ss]
+#+end_src
+
+#+RESULTS:
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+| ability | id | image | name |
+
+*** turns
+#+begin_src haskell
+(Just (Object ts)) = lookup "turns" v
+keys ts
+#+end_src
+
+#+RESULTS:
+| turn-1 | turn-10 | turn-11 | turn-2 | turn-3 | turn-4 | turn-5 | turn-6 | turn-7 | turn-8 | turn-9 |
+
+#+begin_src haskell
+Data.Aeson.KeyMap.lookup "turn-11" ts
+#+end_src
+
+#+RESULTS:
+: Just (Object (fromList [("animalShopSlots",Number 5.0),("foodShopSlots",Number 2.0),("id",String "turn-11"),("index",Number 11.0),("levelUpTier",Number 6.0),("livesLost",Number 5.0),("name",String "Turn 11+"),("tiersAvailable",Number 6.0)]))
+
+#+begin_src haskell
+keys . snd <$> [(k,m) | (k, Object m) <- toList ts]
+#+end_src
+
+#+RESULTS:
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+
+** key analysis
+
+*** The food keys:
+
+#+begin_src haskell
+List.nub $ mconcat $ snd <$> [(k, keys m) | (k, Object m) <- toList fs]
+#+end_src
+
+#+RESULTS:
+| ability | id | image | name | packs | probabilities | tier | cost | notes |
+
+*** The pet keys:
+
+#+begin_src haskell
+List.nub $ mconcat $ snd <$> [(k, keys m) | (k, Object m) <- toList ps]
+#+end_src
+
+#+RESULTS:
+| baseAttack | baseHealth | id | image | level1Ability | level2Ability | level3Ability | name | packs | probabilities | tier | status | notes |
+
+*** The status keys:
+
+#+begin_src haskell
+List.nub $ mconcat $ snd <$> [(k, keys m) | (k, Object m) <- toList ss]
+#+end_src
+
+#+RESULTS:
+| ability | id | image | name |
+
+*** The turn keys:
+
+#+begin_src haskell
+List.nub $ mconcat $ snd <$> [(k, keys m) | (k, Object m) <- toList ts]
+#+end_src
+
+#+RESULTS:
+| animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
+
+*** deeper dives
+
+**** id
+
+Are these exactly the same across the different sections?
+
+        | foods | pets | statuses | turns |
+
+#+begin_src haskell
+[(k, Data.Aeson.KeyMap.lookup "id" m) | (k, Object m) <- toList fs]
+#+end_src
+
+#+RESULTS:
+| food-apple         | Just | (String food-apple)         |
+| food-canned-food   | Just | (String food-canned-food)   |
+| food-chili         | Just | (String food-chili)         |
+| food-chocolate     | Just | (String food-chocolate)     |
+| food-cupcake       | Just | (String food-cupcake)       |
+| food-garlic        | Just | (String food-garlic)        |
+| food-honey         | Just | (String food-honey)         |
+| food-meat-bone     | Just | (String food-meat-bone)     |
+| food-melon         | Just | (String food-melon)         |
+| food-milk          | Just | (String food-milk)          |
+| food-mushroom      | Just | (String food-mushroom)      |
+| food-pear          | Just | (String food-pear)          |
+| food-pizza         | Just | (String food-pizza)         |
+| food-salad-bowl    | Just | (String food-salad-bowl)    |
+| food-sleeping-pill | Just | (String food-sleeping-pill) |
+| food-steak         | Just | (String food-steak)         |
+| food-sushi         | Just | (String food-sushi)         |
+
+It looks like id is redundant:
+
+#+begin_src haskell :results output
+(\x -> Prelude.filter (not . (uncurry (==))) [(show k,show i)| (k,Just (String i)) <- [(k, Data.Aeson.KeyMap.lookup "id" m) | (k, Object m) <- toList x]]) <$> [fs, ps, ss, ts]
+#+end_src
+
+#+RESULTS:
+: [[],[],[],[]]
+
+Not the advantages of working with generic (or weakly-typed data). If we had already undertaken a laborious specification of the type of each section data, we couldn't combine them like this.
+
+**** image
+
+image is the emoji
+
+#+begin_src haskell
+putStrLn $ Text.unpack $ mconcat $ fmap snd $ [(k,u) |(k,(Just (String u))) <- [(k,Data.Aeson.KeyMap.lookup "unicodeCodePoint" m') |(k,Just (Object m')) <- [(k, Data.Aeson.KeyMap.lookup "image" m) | (k, Object m) <- toList fs]]]
+#+end_src
+
+#+RESULTS:
+: 🍎🥫🌶🍫🧁🧄🍯🍖🍈🥛🍄🍐🍕🥗💊🥩🍣
+
+#+begin_src haskell
+putStrLn "\128028"
+#+end_src
+
+#+RESULTS:
+: 🐜
+
+#+begin_src haskell
+putStrLn $ Text.unpack $ mconcat $ fmap snd $ [(k,u) |(k,(Just (String u))) <- [(k,Data.Aeson.KeyMap.lookup "unicodeCodePoint" m') |(k,Just (Object m')) <- [(k, Data.Aeson.KeyMap.lookup "image" m) | (k, Object m) <- toList ps]]]
+#+end_src
+
+#+RESULTS:
+: 🐜🦡🦇🦫🐝🪲🦬🐡🐦🐗🐃🚌🦋🐫🐈‍⬛🐛🐤🐓🐄🦀🦗🐊🦌🐀🦤🐕🐬🐉🐪🦆🦅🐘🐟🦩🪰🦒🐐🦍🐣🦔🦛🐎🦘🐞🐆🦙🦞🦣🦠🐒🦟🐙🦦🦉🐂🦜🦚🐧🐖🐩🐕🐇🐏🐀🦏🐓🦕🦂🦭🦈🐑🦐🦨🦥🐌🐍🕷🐿🦢🐈🐅🐠🦃🐢🦖🐋🪱🦗🪰
+
+#+begin_src haskell
+putStrLn $ Text.unpack $ mconcat $ fmap snd $ [(k,u) |(k,(Just (String u))) <- [(k,Data.Aeson.KeyMap.lookup "unicodeCodePoint" m') |(k,Just (Object m')) <- [(k, Data.Aeson.KeyMap.lookup "image" m) | (k, Object m) <- toList ss]]]
+#+end_src
+
+#+RESULTS:
+: 🍖🥥🍄🧄🍯🍈🥜🌶🥩🦠
+
+status unicodes are the same as the equivalent foods.
+
+**** name
+
+name looks like a label, and looks consistent across sections.
+
+#+begin_src haskell
+[(k, Data.Aeson.KeyMap.lookup "name" m) | (k, Object m) <- toList fs]
+#+end_src
+
+#+RESULTS:
+| food-apple         | Just | (String Apple)         |
+| food-canned-food   | Just | (String Canned Food)   |
+| food-chili         | Just | (String Chili)         |
+| food-chocolate     | Just | (String Chocolate)     |
+| food-cupcake       | Just | (String Cupcake)       |
+| food-garlic        | Just | (String Garlic)        |
+| food-honey         | Just | (String Honey)         |
+| food-meat-bone     | Just | (String Meat Bone)     |
+| food-melon         | Just | (String Melon)         |
+| food-milk          | Just | (String Milk)          |
+| food-mushroom      | Just | (String Mushroom)      |
+| food-pear          | Just | (String Pear)          |
+| food-pizza         | Just | (String Pizza)         |
+| food-salad-bowl    | Just | (String Salad Bowl)    |
+| food-sleeping-pill | Just | (String Sleeping Pill) |
+| food-steak         | Just | (String Steak)         |
+| food-sushi         | Just | (String Sushi)         |
+
+#+begin_src haskell
+[(k, Data.Aeson.KeyMap.lookup "name" m) | (k, Object m) <- toList ps]
+#+end_src
+
+#+RESULTS:
+| pet-ant            | Just | (String Ant)            |
+| pet-badger         | Just | (String Badger)         |
+| pet-bat            | Just | (String Bat)            |
+| pet-beaver         | Just | (String Beaver)         |
+| pet-bee            | Just | (String Bee)            |
+| pet-beetle         | Just | (String Beetle)         |
+| pet-bison          | Just | (String Bison)          |
+| pet-blowfish       | Just | (String Blowfish)       |
+| pet-bluebird       | Just | (String Bluebird)       |
+| pet-boar           | Just | (String Boar)           |
+| pet-buffalo        | Just | (String Buffalo)        |
+| pet-bus            | Just | (String Bus)            |
+| pet-butterfly      | Just | (String Butterfly)      |
+| pet-camel          | Just | (String Camel)          |
+| pet-cat            | Just | (String Cat)            |
+| pet-caterpillar    | Just | (String Caterpillar)    |
+| pet-chick          | Just | (String Chick)          |
+| pet-chicken        | Just | (String Chicken)        |
+| pet-cow            | Just | (String Cow)            |
+| pet-crab           | Just | (String Crab)           |
+| pet-cricket        | Just | (String Cricket)        |
+| pet-crocodile      | Just | (String Crocodile)      |
+| pet-deer           | Just | (String Deer)           |
+| pet-dirty-rat      | Just | (String Dirty Rat)      |
+| pet-dodo           | Just | (String Dodo)           |
+| pet-dog            | Just | (String Dog)            |
+| pet-dolphin        | Just | (String Dolphin)        |
+| pet-dragon         | Just | (String Dragon)         |
+| pet-dromedary      | Just | (String Dromedary)      |
+| pet-duck           | Just | (String Duck)           |
+| pet-eagle          | Just | (String Eagle)          |
+| pet-elephant       | Just | (String Elephant)       |
+| pet-fish           | Just | (String Fish)           |
+| pet-flamingo       | Just | (String Flamingo)       |
+| pet-fly            | Just | (String Fly)            |
+| pet-giraffe        | Just | (String Giraffe)        |
+| pet-goat           | Just | (String Goat)           |
+| pet-gorilla        | Just | (String Gorilla)        |
+| pet-hatching-chick | Just | (String Hatching Chick) |
+| pet-hedgehog       | Just | (String Hedgehog)       |
+| pet-hippo          | Just | (String Hippo)          |
+| pet-horse          | Just | (String Horse)          |
+| pet-kangaroo       | Just | (String Kangaroo)       |
+| pet-ladybug        | Just | (String Ladybug)        |
+| pet-leopard        | Just | (String Leopard)        |
+| pet-llama          | Just | (String Llama)          |
+| pet-lobster        | Just | (String Lobster)        |
+| pet-mammoth        | Just | (String Mammoth)        |
+| pet-microbe        | Just | (String Microbe)        |
+| pet-monkey         | Just | (String Monkey)         |
+| pet-mosquito       | Just | (String Mosquito)       |
+| pet-octopus        | Just | (String Octopus)        |
+| pet-otter          | Just | (String Otter)          |
+| pet-owl            | Just | (String Owl)            |
+| pet-ox             | Just | (String Ox)             |
+| pet-parrot         | Just | (String Parrot)         |
+| pet-peacock        | Just | (String Peacock)        |
+| pet-penguin        | Just | (String Penguin)        |
+| pet-pig            | Just | (String Pig)            |
+| pet-poodle         | Just | (String Poodle)         |
+| pet-puppy          | Just | (String Puppy)          |
+| pet-rabbit         | Just | (String Rabbit)         |
+| pet-ram            | Just | (String Ram)            |
+| pet-rat            | Just | (String Rat)            |
+| pet-rhino          | Just | (String Rhino)          |
+| pet-rooster        | Just | (String Rooster)        |
+| pet-sauropod       | Just | (String Sauropod)       |
+| pet-scorpion       | Just | (String Scorpion)       |
+| pet-seal           | Just | (String Seal)           |
+| pet-shark          | Just | (String Shark)          |
+| pet-sheep          | Just | (String Sheep)          |
+| pet-shrimp         | Just | (String Shrimp)         |
+| pet-skunk          | Just | (String Skunk)          |
+| pet-sloth          | Just | (String Sloth)          |
+| pet-snail          | Just | (String Snail)          |
+| pet-snake          | Just | (String Snake)          |
+| pet-spider         | Just | (String Spider)         |
+| pet-squirrel       | Just | (String Squirrel)       |
+| pet-swan           | Just | (String Swan)           |
+| pet-tabby-cat      | Just | (String Tabby Cat)      |
+| pet-tiger          | Just | (String Tiger)          |
+| pet-tropical-fish  | Just | (String Tropical Fish)  |
+| pet-turkey         | Just | (String Turkey)         |
+| pet-turtle         | Just | (String Turtle)         |
+| pet-tyrannosaurus  | Just | (String Tyrannosaurus)  |
+| pet-whale          | Just | (String Whale)          |
+| pet-worm           | Just | (String Worm)           |
+| pet-zombie-cricket | Just | (String Zombie Cricket) |
+| pet-zombie-fly     | Just | (String Zombie Fly)     |
+
+#+begin_src haskell
+[(k, Data.Aeson.KeyMap.lookup "name" m) | (k, Object m) <- toList ss]
+#+end_src
+
+#+RESULTS:
+| status-bone-attack    | Just | (String Bone Attack)    |
+| status-coconut-shield | Just | (String Coconut Shield) |
+| status-extra-life     | Just | (String Extra Life)     |
+| status-garlic-armor   | Just | (String Garlic Armor)   |
+| status-honey-bee      | Just | (String Honey Bee)      |
+| status-melon-armor    | Just | (String Melon Armor)    |
+| status-poison-attack  | Just | (String Poison Attack)  |
+| status-splash-attack  | Just | (String Splash Attack)  |
+| status-steak-attack   | Just | (String Steak Attack)   |
+| status-weak           | Just | (String Weak)           |
+
+#+begin_src haskell
+[(k, Data.Aeson.KeyMap.lookup "name" m) | (k, Object m) <- toList ts]
+#+end_src
+
+#+RESULTS:
+| turn-1  | Just | (String Turn 1)   |
+| turn-10 | Just | (String Turn 10)  |
+| turn-11 | Just | (String Turn 11+) |
+| turn-2  | Just | (String Turn 2)   |
+| turn-3  | Just | (String Turn 3)   |
+| turn-4  | Just | (String Turn 4)   |
+| turn-5  | Just | (String Turn 5)   |
+| turn-6  | Just | (String Turn 6)   |
+| turn-7  | Just | (String Turn 7)   |
+| turn-8  | Just | (String Turn 8)   |
+| turn-9  | Just | (String Turn 9)   |
+
+**** ability (and sub-objects)
+
+***** food ability
+ #+begin_src haskell
+ take 1 $ fmap (snd) [(k, m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup "ability" m)| (k, Object m) <- toList fs]]
+ #+end_src
+
+ #+RESULTS:
+ | fromList | ((description String Give an animal +1/+1.) (effect Object (fromList ((attackAmount Number 1.0) (healthAmount Number 1.0) (kind String ModifyStats) (target Object (fromList ((kind String PurchaseTarget)))) (untilEndOfBattle Bool False)))) (trigger String Buy) (triggeredBy Object (fromList ((kind String Self))))) |
+
+ description is Text
+
+ effect has three different variations of key combinations:
+
+ #+begin_src haskell
+ List.nub $ keys . snd <$>  [(k,m'') | (k,Just (Object m'')) <- [(k, Data.Aeson.KeyMap.lookup "effect" m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup "ability" m)| (k, Object m) <- toList fs]]]
+ #+end_src
+
+ #+RESULTS:
+ | attackAmount | healthAmount | kind   | target | untilEndOfBattle |
+ | kind         | status       | to     |        |                  |
+ | amount       | kind         | target |        |                  |
+ | kind         | target       |        |        |                  |
+
+  #+begin_src haskell
+  [(k,Data.Aeson.KeyMap.lookup "kind" m'') | (k,Just (Object m'')) <- [(k, Data.Aeson.KeyMap.lookup "effect" m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup "ability" m)| (k, Object m) <- toList fs]]]
+  #+end_src
+
+  #+RESULTS:
+  | food-apple         | Just | (String ModifyStats)    |
+  | food-canned-food   | Just | (String ModifyStats)    |
+  | food-chili         | Just | (String ApplyStatus)    |
+  | food-chocolate     | Just | (String GainExperience) |
+  | food-cupcake       | Just | (String ModifyStats)    |
+  | food-garlic        | Just | (String ApplyStatus)    |
+  | food-honey         | Just | (String ApplyStatus)    |
+  | food-meat-bone     | Just | (String ApplyStatus)    |
+  | food-melon         | Just | (String ApplyStatus)    |
+  | food-milk          | Just | (String ModifyStats)    |
+  | food-mushroom      | Just | (String ApplyStatus)    |
+  | food-pear          | Just | (String ModifyStats)    |
+  | food-pizza         | Just | (String ModifyStats)    |
+  | food-salad-bowl    | Just | (String ModifyStats)    |
+  | food-sleeping-pill | Just | (String Faint)          |
+  | food-steak         | Just | (String ApplyStatus)    |
+  | food-sushi         | Just | (String ModifyStats)    |
+
+
+  kind is always a string
+
+
+  #+begin_src haskell
+  [(k,Data.Aeson.KeyMap.lookup "target" m'') | (k,Just (Object m'')) <- [(k, Data.Aeson.KeyMap.lookup "effect" m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup "ability" m)| (k, Object m) <- toList fs]]]
+  #+end_src
+
+  #+RESULTS:
+  | food-apple         | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-canned-food   | Just    | (Object (fromList ((includingFuture Bool True) (kind String EachShopAnimal)))) |
+  | food-chili         | Nothing |                                                                                |
+  | food-chocolate     | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-cupcake       | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-garlic        | Nothing |                                                                                |
+  | food-honey         | Nothing |                                                                                |
+  | food-meat-bone     | Nothing |                                                                                |
+  | food-melon         | Nothing |                                                                                |
+  | food-milk          | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-mushroom      | Nothing |                                                                                |
+  | food-pear          | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-pizza         | Just    | (Object (fromList ((kind String RandomFriend) (n Number 2.0))))                |
+  | food-salad-bowl    | Just    | (Object (fromList ((kind String RandomFriend) (n Number 2.0))))                |
+  | food-sleeping-pill | Just    | (Object (fromList ((kind String PurchaseTarget))))                             |
+  | food-steak         | Nothing |                                                                                |
+  | food-sushi         | Just    | (Object (fromList ((kind String RandomFriend) (n Number 3.0))))                |
+
+  target is a kind and sometimes an n, which is a number.
+
+  status, to and amount are; a simple strings, 1 key objects, and a number.
+
+  #+begin_src haskell
+  [(k,Data.Aeson.KeyMap.lookup "amount" m'') | (k,Just (Object m'')) <- [(k, Data.Aeson.KeyMap.lookup "effect" m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup "ability" m)| (k, Object m) <- toList fs]]]
+  #+end_src
+
+  #+RESULTS:
+  | food-apple         | Nothing |              |
+  | food-canned-food   | Nothing |              |
+  | food-chili         | Nothing |              |
+  | food-chocolate     | Just    | (Number 1.0) |
+  | food-cupcake       | Nothing |              |
+  | food-garlic        | Nothing |              |
+  | food-honey         | Nothing |              |
+  | food-meat-bone     | Nothing |              |
+  | food-melon         | Nothing |              |
+  | food-milk          | Nothing |              |
+  | food-mushroom      | Nothing |              |
+  | food-pear          | Nothing |              |
+  | food-pizza         | Nothing |              |
+  | food-salad-bowl    | Nothing |              |
+  | food-sleeping-pill | Nothing |              |
+  | food-steak         | Nothing |              |
+  | food-sushi         | Nothing |              |
+
+***** pet ability
+
+ #+begin_src haskell
+ abilities = mconcat $ (\z -> fmap (snd) [(k, m') | (k,Just (Object m')) <- [(k,Data.Aeson.KeyMap.lookup z m)| (k, Object m) <- toList ps]]) <$> ["level1Ability", "level2Ability", "level3Ability"]
+ :t abilities
+ #+end_src
+
+ #+RESULTS:
+ : abilities :: [Object]
+
+ #+begin_src haskell
+ import qualified Data.List as List
+ List.nub $ keys <$> abilities
+ #+end_src
+
+ #+RESULTS:
+ | description | effect | trigger     | triggeredBy |             |
+ | description | effect | maxTriggers | trigger     | triggeredBy |
+
+#+begin_src haskell
+List.sort $ List.nub [s|(Just (String s)) <- lookup "trigger" <$> abilities]
+#+end_src
+
+#+RESULTS:
+| AfterAttack | BeforeAttack | Buy | BuyAfterLoss | BuyFood | BuyTier1Animal | CastsAbility | EatsShopFood | EndOfTurn | EndOfTurnWith3PlusGold | EndOfTurnWith4OrLessAnimals | EndOfTurnWithLvl3Friend | Faint | Hurt | KnockOut | LevelUp | Sell | StartOfBattle | StartOfTurn | Summoned |
+
+ effect has three different variations of key combinations:
+
+ #+begin_src haskell
+ petEffects = [m'' | Just (Object m'') <- Data.Aeson.KeyMap.lookup "effect" <$> abilities]
+ :t petEffects
+ #+end_src
+
+ #+RESULTS:
+ : petEffects :: [Object]
+
+pet effects have a lot of variation:
+
+ #+begin_src haskell
+ List.nub $ keys <$> petEffects
+ #+end_src
+
+ #+RESULTS:
+ | attackAmount | healthAmount | kind   | target           | untilEndOfBattle |    |
+ | amount       | kind         | target |                  |                  |    |
+ | kind         | status       | to     |                  |                  |    |
+ | healthAmount | kind         | target | untilEndOfBattle |                  |    |
+ | attackAmount | kind         | target | untilEndOfBattle |                  |    |
+ | copyAttack   | copyHealth   | from   | kind             | to               |    |
+ | amount       | kind         |        |                  |                  |    |
+ | food         | kind         | shop   |                  |                  |    |
+ | kind         | pet          | team   | withAttack       | withHealth       |    |
+ | copyAttack   | copyHealth   | from   | kind             | percentage       | to |
+ | effects      | kind         |        |                  |                  |    |
+ | kind         | level        | tier   |                  |                  |    |
+ | from         | kind         | level  | to               |                  |    |
+ | kind         | pet          | team   |                  |                  |    |
+ | kind         | percentage   | target |                  |                  |    |
+ | baseAttack   | baseHealth   | kind   | level            | tier             |    |
+ | kind         | level        | target |                  |                  |    |
+ | kind         | target       |        |                  |                  |    |
+ | into         | kind         |        |                  |                  |    |
+
+
+ #+begin_src haskell
+ peKeys = List.nub $ mconcat $ keys <$> petEffects
+ peKeys
+ #+end_src
+
+ #+RESULTS:
+ | attackAmount | healthAmount | kind | target | untilEndOfBattle | amount | status | to | copyAttack | copyHealth | from | food | shop | pet | team | withAttack | withHealth | percentage | effects | level | tier | baseAttack | baseHealth | into |
+
+ attackAmount sometimes a String (?)
+
+ #+begin_src haskell
+ [x | (Just x) <- Data.Aeson.KeyMap.lookup "attackAmount" <$> petEffects]
+ #+end_src
+
+ #+RESULTS:
+ | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 5.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 8.0 | Number | 1.0 | Number | 2.0 | String | ? | Number | 1.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 1.0 | Number | 3.0 | Number | 2.0 | Number | 1.0 | Number | 4.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 4.0 | Number | 4.0 | Number | 4.0 | Number | 2.0 | Number | 2.0 | String | ? | Number | 2.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 2.0 | Number | 6.0 | Number | 4.0 | Number | 2.0 | Number | 6.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 1.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 6.0 | Number | 6.0 | Number | 6.0 | Number | 3.0 | Number | 2.0 | String | ? | Number | 3.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 3.0 | Number | 9.0 | Number | 6.0 | Number | 3.0 |
+
+
+ healthAmount always a number
+
+#+begin_src haskell
+ [x | (Just x) <- Data.Aeson.KeyMap.lookup "healthAmount" <$> petEffects]
+ #+end_src
+
+ #+RESULTS:
+ | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 5.0 | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 3.0 | Number | 8.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 1.0 | Number | 2.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 1.0 | Number | 3.0 | Number | 1.0 | Number | 1.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 4.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 2.0 | Number | 4.0 | Number | 4.0 | Number | 2.0 | Number | 4.0 | Number | 4.0 | Number | 4.0 | Number | 6.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 4.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 2.0 | Number | 6.0 | Number | 2.0 | Number | 2.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 6.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 1.0 | Number | 6.0 | Number | 6.0 | Number | 3.0 | Number | 6.0 | Number | 6.0 | Number | 6.0 | Number | 9.0 | Number | 3.0 | Number | 2.0 | Number | 3.0 | Number | 3.0 | Number | 6.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 3.0 | Number | 9.0 | Number | 3.0 | Number | 3.0 |
+
+ kind a String and always there.
+
+ #+begin_src haskell
+ length [x | (Just x) <- Data.Aeson.KeyMap.lookup "kind" <$> petEffects]
+ #+end_src
+
+ #+RESULTS:
+ : 240
+
+target is strings and bools
+
+ #+begin_src haskell
+ take 4 $ [x | (Just (Object x)) <- Data.Aeson.KeyMap.lookup "target" <$> petEffects]
+ #+end_src
+
+ #+RESULTS:
+ | fromList | ((kind String RandomFriend) (n Number 1.0)) | fromList | ((kind String AdjacentAnimals)) | fromList | ((kind String RandomFriend) (n Number 2.0)) | fromList | ((includingFuture Bool False) (kind String EachShopAnimal)) |
+
+ amount is sometimes an object: attackDamagePercent is the only key and is a number also.
+
+#+begin_src haskell
+[x | (Just x) <- Data.Aeson.KeyMap.lookup "amount" <$> petEffects]
+#+end_src
+
+ #+RESULTS:
+ | Object | (fromList ((attackDamagePercent Number 100.0))) | Number | 2.0 | Number | 2.0 | Number | 1.0 | Number | 7.0 | Number | 1.0 | Number | 5.0 | Number | 1.0 | Number | 1.0 | Number | 2.0 | Object | (fromList ((attackDamagePercent Number 50.0))) | Number | 1.0 | Number | 1.0 | Number | 4.0 | Number | 1.0 | Number | 5.0 | Number | 1.0 | Number | 1.0 | Object | (fromList ((attackDamagePercent Number 100.0))) | Number | 4.0 | Number | 3.0 | Number | 1.0 | Number | 14.0 | Number | 2.0 | Number | 10.0 | Number | 1.0 | Number | 2.0 | Number | 4.0 | Object | (fromList ((attackDamagePercent Number 50.0))) | Number | 1.0 | Number | 2.0 | Number | 8.0 | Number | 1.0 | Number | 10.0 | Number | 2.0 | Number | 2.0 | Object | (fromList ((attackDamagePercent Number 100.0))) | Number | 6.0 | Number | 4.0 | Number | 21.0 | Number | 3.0 | Number | 15.0 | Number | 1.0 | Number | 3.0 | Number | 1.0 | Number | 6.0 | Object | (fromList ((attackDamagePercent Number 50.0))) | Number | 1.0 | Number | 5.0 | Number | 3.0 | Number | 12.0 | Number | 1.0 | Number | 15.0 | Number | 3.0 | Number | 3.0 |
+
+#+begin_src haskell
+[x | (Just x) <- Data.Aeson.KeyMap.lookup "status" <$> petEffects]
+#+end_src
+
+#+RESULTS:
+| String | status-weak | String | status-coconut-shield | String | status-weak | String | status-melon-armor | String | status-weak | String | status-coconut-shield | String | status-weak | String | status-melon-armor | String | status-weak | String | status-coconut-shield | String | status-weak | String | status-melon-armor |
+
+#+begin_src haskell
+[x | (Just x) <- Data.Aeson.KeyMap.lookup "to" <$> petEffects]
+#+end_src
+
+#+RESULTS:
+| Object | (fromList ((kind String RandomEnemy) (n Number 1.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String All))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendBehind) (n Number 1.0))) | Object | (fromList ((kind String RandomEnemy) (n Number 2.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String All))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendBehind) (n Number 2.0))) | Object | (fromList ((kind String RandomEnemy) (n Number 3.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String All))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendBehind) (n Number 3.0))) |
+
+#+begin_src haskell
+[x | (Just x) <- Data.Aeson.KeyMap.lookup "copyAttack" <$> petEffects]
+#+end_src
+
+#+RESULTS:
+| Bool | True | Bool | False | Bool | True | Bool | False | Bool | True | Bool | False | Bool | True |
+
+#+begin_src haskell
+(\s -> [x | (Just x) <- Data.Aeson.KeyMap.lookup s <$> petEffects]) <$> ["from"]
+#+end_src
+
+#+RESULTS:
+| Object | (fromList ((kind String StrongestFriend))) | Object | (fromList ((kind String HighestHealthFriend))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) | Object | (fromList ((kind String HighestHealthFriend))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) | Object | (fromList ((kind String HighestHealthFriend))) | Object | (fromList ((kind String Self))) | Object | (fromList ((kind String FriendAhead) (n Number 1.0))) |
+
+pet effect effects is an Array all of which are length 2, but no new keys are there.
+
+#+begin_src haskell :results output
+effectss = [x | (Just (Array x)) <- Data.Aeson.KeyMap.lookup "effects" <$> petEffects]
+:t effectss
+#+end_src
+
+#+RESULTS:
+:
+: effectss :: [Array]
+
+#+begin_src haskell
+length <$> V.toList <$> effectss
+#+end_src
+
+#+RESULTS:
+| 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+
+#+begin_src haskell
+keys <$> [m | (Object m) <- mconcat $ V.toList <$> effectss]
+#+end_src
+
+#+RESULTS:
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+| healthAmount | kind         | target | untilEndOfBattle |                  |
+| kind         | status       | to     |                  |                  |
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+| healthAmount | kind         | target | untilEndOfBattle |                  |
+| attackAmount | healthAmount | kind   | target           | untilEndOfBattle |
+| kind         | target       |        |                  |                  |
+| kind         | status       | to     |                  |                  |
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+| healthAmount | kind         | target | untilEndOfBattle |                  |
+| kind         | status       | to     |                  |                  |
+| attackAmount | kind         | target | untilEndOfBattle |                  |
+
+***** status ability
+
+ #+begin_src haskell
+ take 1 $ [m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup "ability" m| (_,Object m) <- toList ss]]
+ #+end_src
+
+ #+RESULTS:
+ | fromList | ((description String Attack for 5 more damage.) (effect Object (fromList ((appliesOnce Bool False) (damageModifier Number 5.0) (kind String ModifyDamage)))) (trigger String WhenAttacking) (triggeredBy Object (fromList ((kind String Self))))) |
+
+#+begin_src haskell :results output
+  List.nub $ keys <$> [m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup "ability" m | (_,Object m) <- toList ss]]
+ #+end_src
+
+ #+RESULTS:
+ : [["description","effect","trigger","triggeredBy"]]
+
+ #+begin_src haskell :results output
+   [x | (Just (Object x)) <- [Data.Aeson.KeyMap.lookup "effect" m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup "ability" m | (_,Object m) <- toList ss]]]
+ #+end_src
+
+ #+RESULTS:
+ : [fromList [("appliesOnce",Bool False),("damageModifier",Number 5.0),("kind",String "ModifyDamage")],fromList [("appliesOnce",Bool True),("damageModifier",Null),("kind",String "ModifyDamage")],fromList [("baseAttack",Number 1.0),("baseHealth",Number 1.0),("kind",String "RespawnPet")],fromList [("appliesOnce",Bool False),("damageModifier",Number (-2.0)),("kind",String "ModifyDamage")],fromList [("kind",String "SummonPet"),("pet",String "pet-bee"),("team",String "Friendly")],fromList [("appliesOnce",Bool True),("damageModifier",Number (-20.0)),("kind",String "ModifyDamage")],fromList [("appliesOnce",Bool False),("damageModifier",Null),("kind",String "ModifyDamage")],fromList [("amount",Number 5.0),("kind",String "SplashDamage")],fromList [("appliesOnce",Bool True),("damageModifier",Number 20.0),("kind",String "ModifyDamage")],fromList [("appliesOnce",Bool False),("damageModifier",Number 3.0),("kind",String "ModifyDamage")]]
+
+**** effect
+
+ #+begin_src haskell :results output
+   List.nub $ keys <$> [x | (Just (Object x)) <- [Data.Aeson.KeyMap.lookup "effect" m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup "ability" m | (_,Object m) <- toList ss]]]
+ #+end_src
+
+ #+RESULTS:
+ : [["appliesOnce","damageModifier","kind"],["baseAttack","baseHealth","kind"],["kind","pet","team"],["amount","kind"]]
+
+ #+begin_src haskell :results output
+   List.nub $ keys <$> [x | (Just (Object x)) <- [Data.Aeson.KeyMap.lookup "effect" m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup "ability" m | (_,Object m) <- toList fs]]]
+ #+end_src
+
+ #+RESULTS:
+ : [["attackAmount","healthAmount","kind","target","untilEndOfBattle"],["kind","status","to"],["amount","kind","target"],["kind","target"]]
+
+#+begin_src haskell :output drawer
+   List.nub $ mconcat $ (\x -> List.nub $ keys <$> [x | (Just (Object x)) <- [Data.Aeson.KeyMap.lookup "effect" m' | (Just (Object m')) <- [Data.Aeson.KeyMap.lookup x m | (_,Object m) <- toList ps]]]) <$> ["level1Ability", "level2Ability", "level3Ability"]
+ #+end_src
+
+ #+RESULTS:
+ | attackAmount | healthAmount | kind   | target           | untilEndOfBattle |    |
+ | amount       | kind         | target |                  |                  |    |
+ | kind         | status       | to     |                  |                  |    |
+ | healthAmount | kind         | target | untilEndOfBattle |                  |    |
+ | attackAmount | kind         | target | untilEndOfBattle |                  |    |
+ | copyAttack   | copyHealth   | from   | kind             | to               |    |
+ | amount       | kind         |        |                  |                  |    |
+ | food         | kind         | shop   |                  |                  |    |
+ | kind         | pet          | team   | withAttack       | withHealth       |    |
+ | copyAttack   | copyHealth   | from   | kind             | percentage       | to |
+ | effects      | kind         |        |                  |                  |    |
+ | kind         | level        | tier   |                  |                  |    |
+ | from         | kind         | level  | to               |                  |    |
+ | kind         | pet          | team   |                  |                  |    |
+ | kind         | percentage   | target |                  |                  |    |
+ | baseAttack   | baseHealth   | kind   | level            | tier             |    |
+ | kind         | level        | target |                  |                  |    |
+ | kind         | target       |        |                  |                  |    |
+ | into         | kind         |        |                  |                  |    |
+
+**** all of the effects
+
+#+begin_src haskell
+effects = mconcat $ mconcat $ (\(mega,os) -> (\o -> [(k,x) | (k,Just (Object x)) <- [(k,lookup "effect" m') | (k, Just (Object m')) <- [(k, lookup o m) | (k,Object m) <- Data.Aeson.KeyMap.toList mega]]]) <$> os) <$> [(ss,["ability"]), (ps,["level1Ability", "level2Ability", "level3Ability"]), (fs, ["ability"])]
+length effects
+#+end_src
+
+#+RESULTS:
+: 267
+
+#+begin_src haskell
+ [() | Nothing <- lookup "kind" . snd <$> effects]
+#+end_src
+
+#+RESULTS:
+: []
+
+#+begin_src haskell
+mk = Data.Foldable.foldl' (\b (k,s,ks) -> Map.unionWith (<>) b (Map.singleton (k,ks) s)) Map.empty [(k,s, ks) | (k, Just (String s), ks) <- (\x -> (fst x, lookup "kind" . snd $ x, keys . snd $ x)) <$> effects]
+Map.size mk
+#+end_src
+
+#+RESULTS:
+: 112
+
+ #+begin_src haskell
+ Prelude.filter ((== 2).length) $ List.groupBy (\a b -> fst a == fst b) (Map.keys mk)
+ #+end_src
+
+ #+RESULTS:
+ | (pet-caterpillar (amount kind target))    | (pet-caterpillar (into kind))                                                 |
+ | (pet-hatching-chick (amount kind target)) | (pet-hatching-chick (attackAmount healthAmount kind target untilEndOfBattle)) |
+
+**** List of effect keys
+
+#+begin_src haskell
+mk' = Data.Foldable.foldl' (\b (k,s,ks) -> Map.unionWith (<>) b (Map.singleton (s,ks) [k])) Map.empty [(k,s, ks) | (k, Just (String s), ks) <- (\x -> (fst x, lookup "kind" . snd $ x, keys . snd $ x)) <$> effects]
+Map.keys mk'
+#+end_src
+
+#+RESULTS:
+| AllOf           | (effects kind)                                           |
+| ApplyStatus     | (kind status to)                                         |
+| DealDamage      | (amount kind target)                                     |
+| DiscountFood    | (amount kind)                                            |
+| Evolve          | (into kind)                                              |
+| Faint           | (kind target)                                            |
+| FoodMultiplier  | (amount kind)                                            |
+| GainExperience  | (amount kind target)                                     |
+| GainGold        | (amount kind)                                            |
+| ModifyDamage    | (appliesOnce damageModifier kind)                        |
+| ModifyStats     | (attackAmount healthAmount kind target untilEndOfBattle) |
+| ModifyStats     | (attackAmount kind target untilEndOfBattle)              |
+| ModifyStats     | (healthAmount kind target untilEndOfBattle)              |
+| OneOf           | (effects kind)                                           |
+| ReduceHealth    | (kind percentage target)                                 |
+| RefillShops     | (food kind shop)                                         |
+| RepeatAbility   | (kind level target)                                      |
+| RespawnPet      | (baseAttack baseHealth kind)                             |
+| SplashDamage    | (amount kind)                                            |
+| SummonPet       | (kind pet team)                                          |
+| SummonPet       | (kind pet team withAttack withHealth)                    |
+| SummonRandomPet | (baseAttack baseHealth kind level tier)                  |
+| SummonRandomPet | (kind level tier)                                        |
+| Swallow         | (kind target)                                            |
+| TransferAbility | (from kind level to)                                     |
+| TransferStats   | (copyAttack copyHealth from kind percentage to)          |
+| TransferStats   | (copyAttack copyHealth from kind to)                     |
+
+ #+begin_src haskell
+ Prelude.filter ((== 2).length) $ List.groupBy (\a b -> fst a == fst b) (Map.keys mk')
+ #+end_src
+
+ #+RESULTS:
+ | (SummonPet (kind pet team))                                     | (SummonPet (kind pet team withAttack withHealth))    |
+ | (SummonRandomPet (baseAttack baseHealth kind level tier))       | (SummonRandomPet (kind level tier))                  |
+ | (TransferStats (copyAttack copyHealth from kind percentage to)) | (TransferStats (copyAttack copyHealth from kind to)) |
+
+#+begin_src haskell
+List.sort $ List.nub [s|(Just (String s)) <- [(lookup "kind" o) | (Object o) <- [x|(Just x) <- lookup "target" . snd <$> effects]]]
+#+end_src
+
+#+RESULTS:
+: <interactive>:63:122: error:
+:     • Variable not in scope: effects :: [(a0, KeyMap Value)]
+:     • Perhaps you meant ‘effect’ (line 235)
+
+#+begin_src haskell
+Prelude.filter ((== Just (String "DealDamage")) . lookup "kind" . snd) effects
+#+end_src
+
+**** probabilities
+
+***** food probs
+
+#+begin_src haskell
+fp = [(k, Data.Aeson.KeyMap.lookup "probabilities" m) | (k, Object m) <- toList fs]
+:t fp
+#+end_src
+
+#+RESULTS:
+: fp :: [(Key, Maybe Value)]
+
+#+begin_src haskell
+[k | (k,Nothing) <- fp ]
+#+end_src
+
+#+RESULTS:
+| food-milk |
+
+#+begin_src haskell :results output
+length . snd <$> [(k,V.toList v) | (k,Just (Array v)) <- fp ]
+#+end_src
+
+#+RESULTS:
+: [11,5,3,3,9,7,11,9,1,1,5,1,7,9,1,3]
+
+#+begin_src haskell :results output
+:t mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- fp ]
+#+end_src
+
+#+RESULTS:
+: mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- fp ]
+:   :: [Value]
+
+#+begin_src haskell :results output
+List.nub $ keys <$> [m | (Object m) <- mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- fp ]]
+#+end_src
+
+#+RESULTS:
+: [["kind","perShop","perSlot","turn"]]
+
+#+begin_src haskell :results output
+take 3 [m | (Object m) <- mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- fp ]]
+#+end_src
+
+#+RESULTS:
+: [fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.5),("StandardPack",Number 0.5)])),("perSlot",Object (fromList [("ExpansionPack1",Number 0.5),("StandardPack",Number 0.5)])),("turn",String "turn-1")],fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.5),("StandardPack",Number 0.5)])),("perSlot",Object (fromList [("ExpansionPack1",Number 0.5),("StandardPack",Number 0.5)])),("turn",String "turn-2")],fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.3599999999999999),("StandardPack",Number 0.3599999999999999)])),("perSlot",Object (fromList [("ExpansionPack1",Number 0.2),("StandardPack",Number 0.2)])),("turn",String "turn-3")]]
+
+***** pet probs
+
+#+begin_src haskell
+pp = [(k, Data.Aeson.KeyMap.lookup "probabilities" m) | (k, Object m) <- toList ps]
+:t pp
+#+end_src
+
+#+RESULTS:
+: pp :: [(Key, Maybe Value)]
+
+#+begin_src haskell
+[k | (k,Nothing) <- pp ]
+#+end_src
+
+#+RESULTS:
+| pet-bee | pet-bus | pet-butterfly | pet-chick | pet-dirty-rat | pet-ram | pet-sloth | pet-zombie-cricket | pet-zombie-fly |
+
+
+#+begin_src haskell :results output
+length . snd <$> [(k,V.toList v) | (k,Just (Array v)) <- pp ]
+#+end_src
+
+#+RESULTS:
+: [11,9,11,11,11,7,9,11,4,7,9,4,9,5,5,11,11,5,7,11,9,7,4,11,11,5,11,11,11,4,9,5,4,9,11,7,11,9,11,4,7,7,4,7,5,11,4,11,9,9,7,11,7,11,5,9,9,11,5,7,4,5,5,5,9,11,7,9,4,11,7,11,11,4,9,5,9,4,7,7]
+
+#+begin_src haskell :results output
+:t mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- pp ]
+#+end_src
+
+#+RESULTS:
+: mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- pp ]
+:   :: [Value]
+
+#+begin_src haskell :results output
+List.nub $ keys <$> [m | (Object m) <- mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- pp ]]
+#+end_src
+
+#+RESULTS:
+: [["kind","perShop","perSlot","turn"],["kind","perSlot","turn"]]
+
+#+begin_src haskell :results output
+take 3 [m | (Object m) <- mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v)) <- pp ]]
+#+end_src
+
+#+RESULTS:
+: [fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.2976680384087793),("StandardPack",Number 0.2976680384087793)])),("perSlot",Object (fromList [("ExpansionPack1",Number 0.1111111111111111),("StandardPack",Number 0.1111111111111111)])),("turn",String "turn-1")],fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.2976680384087793),("StandardPack",Number 0.2976680384087793)])),("perSlot",Object (fromList [("ExpansionPack1",Number 0.1111111111111111),("StandardPack",Number 0.1111111111111111)])),("turn",String "turn-2")],fromList [("kind",String "shop"),("perShop",Object (fromList [("ExpansionPack1",Number 0.14973028138212574),("StandardPack",Number 0.14973028138212574)])),("perSlot",Object (fromList [("ExpansionPack1",Number 5.263157894736842e-2),("StandardPack",Number 5.263157894736842e-2)])),("turn",String "turn-3")]]
+
+**** cost | notes | packs   | tier |
+
+#+begin_src haskell
+(\x -> [(k, Data.Aeson.KeyMap.lookup x m) | (k, Object m) <- toList fs]) <$> ["cost"]
+#+end_src
+
+#+RESULTS:
+| (food-apple Nothing) | (food-canned-food Nothing) | (food-chili Nothing) | (food-chocolate Nothing) | (food-cupcake Nothing) | (food-garlic Nothing) | (food-honey Nothing) | (food-meat-bone Nothing) | (food-melon Nothing) | (food-milk Just (Number 0.0)) | (food-mushroom Nothing) | (food-pear Nothing) | (food-pizza Nothing) | (food-salad-bowl Nothing) | (food-sleeping-pill Just (Number 1.0)) | (food-steak Nothing) | (food-sushi Nothing) |
+
+#+begin_src haskell
+(\x -> [(k, Data.Aeson.KeyMap.lookup x m) | (k, Object m) <- toList fs]) <$> ["notes"]
+#+end_src
+
+#+RESULTS:
+| (food-apple Nothing) | (food-canned-food Nothing) | (food-chili Nothing) | (food-chocolate Nothing) | (food-cupcake Nothing) | (food-garlic Nothing) | (food-honey Nothing) | (food-meat-bone Nothing) | (food-melon Nothing) | (food-milk Just (String This is free!)) | (food-mushroom Nothing) | (food-pear Nothing) | (food-pizza Nothing) | (food-salad-bowl Nothing) | (food-sleeping-pill Just (String This costs 1 gold.)) | (food-steak Nothing) | (food-sushi Nothing) |
+
+#+begin_src haskell
+(\x -> [(k, Data.Aeson.KeyMap.lookup x m) | (k, Object m) <- toList fs]) <$> ["packs"]
+#+end_src
+
+#+RESULTS:
+| (food-apple Just (Array (String StandardPack String ExpansionPack1))) | (food-canned-food Just (Array (String StandardPack String ExpansionPack1))) | (food-chili Just (Array (String StandardPack String ExpansionPack1))) | (food-chocolate Just (Array (String StandardPack String ExpansionPack1))) | (food-cupcake Just (Array (String StandardPack String ExpansionPack1))) | (food-garlic Just (Array (String StandardPack String ExpansionPack1))) | (food-honey Just (Array (String StandardPack String ExpansionPack1))) | (food-meat-bone Just (Array (String StandardPack String ExpansionPack1))) | (food-melon Just (Array (String StandardPack String ExpansionPack1))) | (food-milk Just (Array (String StandardPack String ExpansionPack1))) | (food-mushroom Just (Array (String StandardPack String ExpansionPack1))) | (food-pear Just (Array (String StandardPack String ExpansionPack1))) | (food-pizza Just (Array (String StandardPack String ExpansionPack1))) | (food-salad-bowl Just (Array (String StandardPack String ExpansionPack1))) | (food-sleeping-pill Just (Array (String StandardPack String ExpansionPack1))) | (food-steak Just (Array (String StandardPack String ExpansionPack1))) | (food-sushi Just (Array (String StandardPack String ExpansionPack1))) |
+
+#+begin_src haskell
+(\x -> [(k, Data.Aeson.KeyMap.lookup x m) | (k, Object m) <- toList fs]) <$> ["tier"]
+#+end_src
+
+#+RESULTS:
+| (food-apple Just (Number 1.0)) | (food-canned-food Just (Number 4.0)) | (food-chili Just (Number 5.0)) | (food-chocolate Just (Number 5.0)) | (food-cupcake Just (Number 2.0)) | (food-garlic Just (Number 3.0)) | (food-honey Just (Number 1.0)) | (food-meat-bone Just (Number 2.0)) | (food-melon Just (Number 6.0)) | (food-milk Just (String Summoned)) | (food-mushroom Just (Number 6.0)) | (food-pear Just (Number 4.0)) | (food-pizza Just (Number 6.0)) | (food-salad-bowl Just (Number 3.0)) | (food-sleeping-pill Just (Number 2.0)) | (food-steak Just (Number 6.0)) | (food-sushi Just (Number 5.0)) |
+
+
+* fromJSONs
+
+I would guess that there are enough quirks that toJsons are impractical: the json data being used as the reference point is better thought of as immutable.
+
+** turns
+
+#+begin_src haskell
+(Just (Object ts)) = Data.Aeson.KeyMap.lookup "turns" v1
+keys ts
+#+end_src
+
+#+RESULTS:
+| turn-1 | turn-10 | turn-11 | turn-2 | turn-3 | turn-4 | turn-5 | turn-6 | turn-7 | turn-8 | turn-9 |
+
+#+begin_src haskell
+Data.Aeson.KeyMap.lookup "turn-11" ts
+#+end_src
+
+#+RESULTS:
+: Just (Object (fromList [("animalShopSlots",Number 5.0),("foodShopSlots",Number 2.0),("id",String "turn-11"),("index",Number 11.0),("levelUpTier",Number 6.0),("livesLost",Number 5.0),("name",String "Turn 11+"),("tiersAvailable",Number 6.0)]))
+
+
+#+begin_src haskell :results output
+length ts
+length [(k,m) | (k, Object m) <- toList ts]
+#+end_src
+
+#+RESULTS:
+: 11
+: 11
+
+#+begin_src haskell :results output
+:t [(k,m) | (k, Object m) <- toList ts]
+#+end_src
+
+#+RESULTS:
+: [(k,m) | (k, Object m) <- toList ts] :: [(Key, Object)]
+
+#+begin_src haskell :results output
+turns = [t| (Right t) <- (fmap (parseEither parseJSON . snd) $ toList ts) :: [Either String Turn]]
+length turns
+#+end_src
+
+#+RESULTS:
+:
+: 11
+
+** image
+
+#+begin_src haskell
+putStrLn $ Text.unpack $ mconcat $ fmap snd $ [(k,u) |(k,(Just (String u))) <- [(k,Data.Aeson.KeyMap.lookup "unicodeCodePoint" m') |(k,Just (Object m')) <- [(k, Data.Aeson.KeyMap.lookup "image" m) | (k, Object m) <- toList fs]]]
+#+end_src
+
+#+RESULTS:
+: 🍎🥫🌶🍫🧁🧄🍯🍖🍈🥛🍄🍐🍕🥗💊🥩🍣
+
+#+begin_src haskell
+putStrLn $ Text.unpack $ mconcat $ fmap snd $ [(k,u) |(k,(Just (String u))) <- [(k,Data.Aeson.KeyMap.lookup "unicodeCodePoint" m') |(k,Just (Object m')) <- [(k, Data.Aeson.KeyMap.lookup "image" m) | (k, Object m) <- toList fs]]]
+#+end_src
+
+#+begin_src haskell
+fromJSON . snd <$> toList fs :: [Result Emoji]
+#+end_src
+
+#+RESULTS:
+| Success | (Emoji (char = \127822)) | Success | (Emoji (char = \129387)) | Success | (Emoji (char = \127798)) | Success | (Emoji (char = \127851)) | Success | (Emoji (char = \129473)) | Success | (Emoji (char = \129476)) | Success | (Emoji (char = \127855)) | Success | (Emoji (char = \127830)) | Success | (Emoji (char = \127816)) | Success | (Emoji (char = \129371)) | Success | (Emoji (char = \127812)) | Success | (Emoji (char = \127824)) | Success | (Emoji (char = \127829)) | Success | (Emoji (char = \129367)) | Success | (Emoji (char = \128138)) | Success | (Emoji (char = \129385)) | Success | (Emoji (char = \127843)) |
+
+** effect
+
+#+begin_src haskell
+effects = mconcat $ mconcat $ (\(mega,os) -> (\o -> [(k,x) | (k,Just (Object x)) <- [(k,lookup "effect" m') | (k, Just (Object m')) <- [(k, lookup o m) | (k,Object m) <- Data.Aeson.KeyMap.toList mega]]]) <$> os) <$> [(ss,["ability"]), (ps,["level1Ability", "level2Ability", "level3Ability"]), (fs, ["ability"])]
+length effects
+#+end_src
+
+#+RESULTS:
+: 267
+
+ #+begin_src haskell
+ import Data.Bifunctor
+ import Data.Maybe
+ bad = fst <$> Prelude.filter (isNothing . snd) (second (parseMaybe parseJSON . Object) <$> effects :: [(Key, Maybe Effect)])
+ bad
+ #+end_src
+
+ #+RESULTS:
+ : > > []
+
+ #+begin_src haskell
+ import Data.Bifunctor
+ import Data.Maybe
+ bad' = Prelude.filter (isNothing . (parseMaybe parseJSON :: Value -> Maybe Effect) . Object . snd) effects
+ bad'
+ #+end_src
+
+ #+RESULTS:
+ : > > [("pet-octopus",fromList [("effects",Array [Object (fromList [("attackAmount",Number 8.0),("healthAmount",Number 8.0),("kind",String "ModifyStats"),("target",Object (fromList [("kind",String "Self")])),("untilEndOfBattle",Bool False)]),Object (fromList [("kind",String "GainAbility"),("target",Object (fromList [("kind",String "Self")]))])]),("kind",String "AllOf")])]
+
+ #+begin_src haskell
+ bado = (\k -> (Map.!) (Map.fromList effects) k) <$> bad
+ fromJSON . Object <$> bado :: [Result Effect]
+ #+end_src
+
+ #+RESULTS:
+ | Success | (DealDamage (Amount 5) (Target (targetType = EachEnemy targetN = Nothing includingFutures = Nothing))) |
+
+
+  #+begin_src haskell
+  bado
+ #+end_src
+
+ #+RESULTS:
+ | fromList | ((amount Number 5.0) (kind String DealDamage) (target Object (fromList ((kind String EachEnemy))))) |
