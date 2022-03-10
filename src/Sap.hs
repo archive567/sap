@@ -3,6 +3,9 @@
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use lambda-case" #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Sap where
 
@@ -12,15 +15,55 @@ import qualified Data.ByteString.Lazy as B
 import GHC.Generics
 import Data.Aeson.Types
 import Data.Aeson.KeyMap
-import Data.Text (Text, unpack)
+import Data.Text (Text, unpack, pack)
 import Control.Monad
 import qualified Data.Map.Strict as Map
 import Text.Read (readMaybe)
+import Data.Bifunctor
 
 sch :: IO (Maybe Value)
 sch = decode <$> B.readFile "other/sap.json"
 
-data Pack = StandardPack | ExpansionPack deriving (Generic, Show, Eq)
+sch' :: IO (Maybe SapData)
+sch' = decode <$> B.readFile "other/sap.json"
+
+data SapData = SapData
+  { foods :: [(Key, Food)],
+    pets :: [(Key, Pet)],
+    statuses :: [(Key, Status)],
+    turns :: [(Key, Turn)]
+  } deriving (Eq, Show, Generic)
+
+instance FromJSON SapData where
+  parseJSON =
+    withObject "SapData"
+      (\v ->
+        SapData
+        <$> kv' v "foods"
+        <*> kv' v "pets"
+        <*> kv' v "statuses"
+        <*> kv' v "turns")
+
+kv' :: (FromJSON a) => Object -> Key -> Parser [(Key, a)]
+kv' v l =
+  maybe
+  (fail "label not found")
+  (withObject "kv'"
+   (\o -> pure $
+     [(k,a)|
+       (k,Right a) <-
+         second (parseEither parseJSON) <$> toList o]))
+  (lookup l v)
+
+data Pack = StandardPack | ExpansionPack1 | EasterEgg deriving (Generic, Show, Eq)
+
+instance FromJSON Pack where
+  parseJSON =
+    withText "Pack" $ \case
+        "StandardPack" -> pure StandardPack
+        "ExpansionPack1" -> pure ExpansionPack1
+        "EasterEgg" -> pure EasterEgg
+        _ -> fail "unknown Pack"
 
 data Turn = Turn
   {
@@ -58,7 +101,7 @@ instance FromJSON Amount where
         prependFailure "parsing Amount failed, "
             (typeMismatch "Object" invalid)
 
-data TargetType = AdjacentAnimals | AdjacentFriends | All | DifferentTierAnimals | EachEnemy | EachFriend | EachShopAnimal | FirstEnemy | FriendAhead | FriendBehind | HighestHealthFriend | HighestHealthEnemy | LastEnemy | LeftMostFriend | Level2And3Friends | LowestHealthEnemy | PurchaseTarget | RandomEnemy | RandomFriend | RightMostFriend | Self | StrongestFriend | TriggeringEntity deriving (Show, Read, Eq, Generic)
+data TargetType = AdjacentAnimals | AdjacentFriends | All | DifferentTierAnimals | EachEnemy | EachFriend | EachShopAnimal | FirstEnemy | FriendAhead | FriendBehind | HighestHealthFriend | HighestHealthEnemy | LastEnemy | LeftMostFriend | Level2And3Friends | LowestHealthEnemy | Player | PurchaseTarget | RandomEnemy | RandomFriend | RightMostFriend | Self | StrongestFriend | TriggeringEntity deriving (Show, Read, Eq, Generic)
 
 instance FromJSON TargetType where
   parseJSON =
@@ -81,15 +124,42 @@ data Team = Friendly | Enemy deriving (Show, Eq, Generic)
 
 instance FromJSON Team where
   parseJSON =
-    withText "inner Team" $ \case
+    withText "Team" $ \case
         "Friendly" -> pure Friendly
         "Enemy" -> pure Enemy
         _ -> fail "unknown Team"
 
 type Level = Int
-type Tier = Int
-type Attack = Int
-type Health = Int
+
+data Tier = TierN Int | TierSummoned deriving (Eq, Show, Generic)
+
+instance FromJSON Tier where
+  parseJSON (Number n) = pure $ TierN (round n)
+  parseJSON (String s) = case s of
+    "Summoned" -> pure TierSummoned
+    _ -> fail "unknown Tier"
+  parseJSON invalid    =
+        prependFailure "parsing Amount failed, "
+            (typeMismatch "Object" invalid)
+
+data Attack = Attack Int | AttackQuestion deriving (Show, Eq, Generic)
+
+instance FromJSON Attack where
+  parseJSON (Number n) = pure $ Attack (round n)
+  parseJSON (String "?") = pure AttackQuestion
+  parseJSON invalid    =
+        prependFailure "parsing Attack failed, "
+            (typeMismatch "Object" invalid)
+
+data Health = Health Int | HealthQuestion deriving (Show, Eq, Generic)
+
+instance FromJSON Health where
+  parseJSON (Number n) = pure $ Health (round n)
+  parseJSON (String "?") = pure HealthQuestion
+  parseJSON invalid    =
+        prependFailure "parsing Health failed, "
+            (typeMismatch "Object" invalid)
+
 type Status = Text
 
 newtype DamageModifier = DamageModifier { modifier :: Maybe Int } deriving (Show, Eq, Generic)
@@ -131,7 +201,7 @@ instance FromJSON Effect where
   parseJSON = withObject "Effect" $ \o -> do
     e <- o .: "kind"
     withText "kind of Effect"
-      (\s -> case s of
+      (\case
           "AllOf" -> AllOf <$> o .: "effects"
           "ApplyStatus" -> ApplyStatus <$> o .: "status" <*> o .: "to"
           "DealDamage" -> DealDamage <$> o .: "amount" <*> o .: "target"
@@ -175,22 +245,18 @@ instance FromJSON Effect where
             o .:? "percentage"
           x -> fail ("unknown effect kind key:" <> show x)) e
 
-newtype Emoji = Emoji { char :: Char } deriving (Show, Generic, Eq)
+newtype Emoji = Emoji { char :: String } deriving (Show, Generic, Eq)
 
 instance FromJSON Emoji where
     parseJSON =
-      join .
-      withObject "outer emoji"
-      (\v -> withObject "inner emoji"
-       (\v' -> Emoji <$> v' .: "unicodeCodePoint") <$>
-       (v .: "image"))
+      withObject "Emoji"
+      (\v -> Emoji <$> v .: "unicodeCodePoint")
 
 newtype Name = Name { label :: Text } deriving (Show, Generic, Eq)
 
-instance FromJSON Name where
-    parseJSON = withObject "name" (.: "name")
+instance FromJSON Name
 
-data Trigger = AfterAttack | BeforeAttack | Buy | BuyAfterLoss | BuyFood | BuyTier1Animal | CastsAbility | EatsShopFood | EndOfTurn | EndOfTurnWith3PlusGold | EndOfTurnWith4OrLessAnimals | EndOfTurnWithLvl3Friend | Faint | Hurt | KnockOut | LevelUp | Sell | StartOfBattle | StartOfTurn | Summoned deriving (Show, Generic, Eq, Read)
+data Trigger = AfterAttack | BeforeAttack | Buy | BuyAfterLoss | BuyFood | BuyTier1Animal | CastsAbility | EatsShopFood | EndOfTurn | EndOfTurnWith3PlusGold | EndOfTurnWith4OrLessAnimals | EndOfTurnWithLvl3Friend | Faint | Hurt | KnockOut | LevelUp | Sell | StartOfBattle | StartOfTurn | Summoned | WhenAttacking | WhenDamaged deriving (Show, Generic, Eq, Read)
 
 instance FromJSON Trigger where
   parseJSON =
@@ -209,7 +275,7 @@ data Ability = Ability
     -- | What the effect does.
     effect :: Effect,
     untilEndOfBattle :: Maybe Bool
-  }
+  } deriving (Eq, Show, Generic)
 
 instance FromJSON Ability where
   parseJSON =
@@ -222,42 +288,106 @@ instance FromJSON Ability where
         <*> v .: "effect"
         <*> v .:? "untilEndOfBattle")
 
-{-
 data Probability = Probability
   {
     probKind :: ProbKind,
-    turn :: Turn,
-    perShop :: PerShop,
+    turn :: Text,
+    perShop :: Maybe PerShop,
     perSlot :: PerShop
   } deriving (Eq, Show, Generic)
 
-instance FromJSON Probability
+instance FromJSON Probability where
+  parseJSON =
+    withObject "Probability"
+      (\v ->
+        Probability
+        <$> v .: "kind"
+        <*> v .: "turn"
+        <*> v .:? "perShop"
+        <*> v .: "perSlot")
 
-data ProbKind deriving (Eq, Show, Generic)
+data ProbKind = ProbShop | ProbLevelUp deriving (Eq, Show, Generic)
 
-data PerShop = PerShop { standardPack :: Double, expansionPack1 :: Double } deriving (Eq, Show, Generic)
+instance FromJSON ProbKind where
+  parseJSON =
+    withText "ProbKind" $ \case
+        "shop" -> pure ProbShop
+        "levelup" -> pure ProbLevelUp
+        _ -> fail "unknown ProbKind"
 
--}
+data PerShop = PerShop { standardPack :: Maybe Double, expansionPack1 :: Maybe Double } deriving (Eq, Show, Generic)
+
+instance FromJSON PerShop where
+  parseJSON =
+    withObject "PerShop"
+      (\v ->
+        PerShop
+        <$> v .:? "StandardPack"
+        <*> v .:? "ExpansionPack1")
 
 -- TODO:
 data Pet = Pet
   {
     -- | The name of the pet.
-    petName :: Name,
+    petName :: Text,
+    petEmoji :: Emoji,
     -- | The tier the pet appears in.
-    tier :: Int,
+    tier :: Tier,
     -- | The standard starting attack points for the pet.
-    baseAttack :: Int,
+    baseAttack :: Attack,
     -- | The standard starting health points for the pet.
-    baseHealth :: Int,
+    baseHealth :: Health,
     -- | Which packs the pet appears in.
     packs :: [Pack],
     -- | The ability the pet has at level 1.
-    level1Ability :: Ability,
+    level1Ability :: Maybe Ability,
     -- | The ability the pet has at level 2.
-    level2Ability :: Ability,
+    level2Ability :: Maybe Ability,
     -- | The ability the pet has at level 3.
-    level3Ability :: Ability
-  }
+    level3Ability :: Maybe Ability,
+    petProbabilities :: Maybe [Probability],
+    petStatus :: Maybe Status,
+    petNotes :: Maybe Text
+  } deriving (Eq, Show, Generic)
 
-data Food
+instance FromJSON Pet where
+  parseJSON =
+    withObject "Pet"
+      (\v ->
+        Pet
+        <$> v .: "name"
+        <*> v .: "image"
+        <*> v .: "tier"
+        <*> v .: "baseAttack"
+        <*> v .: "baseHealth"
+        <*> v .: "packs"
+        <*> v .:? "level1Ability"
+        <*> v .:? "level2Ability"
+        <*> v .:? "level3Ability"
+        <*> v .:? "probabilities"
+        <*> v .:? "status"
+        <*> v .:? "notes")
+
+data Food = Food
+  {
+    foodName :: Text,
+    foodEmoji :: Emoji,
+    foodCost :: Maybe Int,
+    foodTier :: Tier,
+    foodPacks :: [Pack],
+    foodProbabilities :: Maybe [Probability],
+    foodNotes :: Maybe Text
+  } deriving (Eq, Show, Generic)
+
+instance FromJSON Food where
+  parseJSON =
+    withObject "Food"
+      (\v ->
+        Food
+        <$> v .: "name"
+        <*> v .: "image"
+        <*> v .:? "cost"
+        <*> v .: "tier"
+        <*> v .: "packs"
+        <*> v .:? "probabilities"
+        <*> v .:? "notes")

@@ -49,30 +49,13 @@ export interface Ability {
 * Exploration of JSON data
 ** haskell setup
 
-#+begin_src haskell :results output
+#+begin_src haskell
 :r
 :set prompt "> "
 :set -Wno-type-defaults
 :set -Wno-name-shadowing
 :set -XOverloadedStrings
-#+end_src
-
-#+RESULTS:
-
-check
-
-#+begin_src haskell :results output :export both
-let x = "ok"
-putStrLn x
-#+end_src
-
-#+RESULTS:
-:
-: ok
-
-We have a partial schema and could create a data type to match the data but it is far easier to go top down and just inspect the Value out of aeson, and then clean up afterwards:
-
-#+begin_src haskell
+:set -Wno-incomplete-uni-patterns
 import Prelude hiding (lookup)
 import Sap
 import Data.Aeson
@@ -84,7 +67,16 @@ import qualified Data.Aeson.KeyMap as A
 import Data.Aeson.Types
 import qualified Data.Text as Text
 import qualified Data.Vector as V
+(Just (Object v)) <- decode <$> B.readFile "other/sap.json" :: IO (Maybe Value)
+(Just (Object fs)) = lookup "foods" v
+(Just (Object ps)) = lookup "pets" v
+(Just (Object ss)) = lookup "statuses" v
+(Just (Object ts)) = lookup "turns" v
+length <$> [fs,ps,ss,ts]
 #+end_src
+
+#+RESULTS:
+: > > > > > > > > > > > > > > > > > > > > > [17,89,10,11]
 
 ** json file
 
@@ -94,18 +86,11 @@ import qualified Data.Vector as V
 (Just (Object ps)) = lookup "pets" v
 (Just (Object ss)) = lookup "statuses" v
 (Just (Object ts)) = lookup "turns" v
+length <$> [fs,ps,ss,ts]
 #+end_src
 
 #+RESULTS:
-: <interactive>:462:1: warning: [-Wincomplete-uni-patterns]
-:     Pattern match(es) are non-exhaustive
-:     In a pattern binding:
-:         Patterns not matched:
-:             Just (Array _)
-:             Just (String _)
-:             Just (Number _)
-:             Just (Bool _)
-:             ...
+| 17 | 89 | 10 | 11 |
 
 ** high level anaysis
 #+begin_src haskell :results output
@@ -276,7 +261,6 @@ keys . snd <$> [(k,m) | (k, Object m) <- toList ts]
 | animalShopSlots | foodShopSlots | id | index | levelUpTier | livesLost | name | tiersAvailable |
 
 ** key analysis
-
 *** The food keys:
 
 #+begin_src haskell
@@ -1109,7 +1093,6 @@ take 3 [m | (Object m) <- mconcat $ snd <$> [(k,V.toList v) | (k,Just (Array v))
 #+RESULTS:
 | (food-apple Just (Number 1.0)) | (food-canned-food Just (Number 4.0)) | (food-chili Just (Number 5.0)) | (food-chocolate Just (Number 5.0)) | (food-cupcake Just (Number 2.0)) | (food-garlic Just (Number 3.0)) | (food-honey Just (Number 1.0)) | (food-meat-bone Just (Number 2.0)) | (food-melon Just (Number 6.0)) | (food-milk Just (String Summoned)) | (food-mushroom Just (Number 6.0)) | (food-pear Just (Number 4.0)) | (food-pizza Just (Number 6.0)) | (food-salad-bowl Just (Number 3.0)) | (food-sleeping-pill Just (Number 2.0)) | (food-steak Just (Number 6.0)) | (food-sushi Just (Number 5.0)) |
 
-
 * fromJSONs
 
 I would guess that there are enough quirks that toJsons are impractical: the json data being used as the reference point is better thought of as immutable.
@@ -1222,3 +1205,120 @@ length effects
 
  #+RESULTS:
  | fromList | ((amount Number 5.0) (kind String DealDamage) (target Object (fromList ((kind String EachEnemy))))) |
+
+** ability
+
+#+begin_src haskell
+allAbilities = mconcat $ mconcat $ (\(mega,os) -> (\o -> [(k,m') | (k, Just (Object m')) <- [(k, lookup o m) | (k,Object m) <- Data.Aeson.KeyMap.toList mega]]) <$> os) <$> [(ss,["ability"]), (ps,["level1Ability", "level2Ability", "level3Ability"]), (fs, ["ability"])]
+length allAbilities
+#+end_src
+
+#+RESULTS:
+: 267
+
+#+begin_src haskell :results output
+import Data.Bifunctor
+import Data.Maybe
+bad = Prelude.filter (isNothing . (parseMaybe parseJSON :: Value -> Maybe Ability) . Object . snd) allAbilities
+length bad
+take 10 bad
+#+end_src
+
+#+RESULTS:
+:
+: > > 95
+: [("status-bone-attack",fromList [("description",String "Attack for 5 more damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number 5.0),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-coconut-shield",fromList [("description",String "Ignore damage once."),("effect",Object (fromList [("appliesOnce",Bool True),("damageModifier",Null),("kind",String "ModifyDamage")])),("trigger",String "WhenDamaged"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-garlic-armor",fromList [("description",String "Take 2 less damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number (-2.0)),("kind",String "ModifyDamage")])),("trigger",String "WhenDamaged"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-melon-armor",fromList [("description",String "Take 20 damage less, once."),("effect",Object (fromList [("appliesOnce",Bool True),("damageModifier",Number (-20.0)),("kind",String "ModifyDamage")])),("trigger",String "WhenDamaged"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-poison-attack",fromList [("description",String "Knock out any animal hit by this."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Null),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-splash-attack",fromList [("description",String "Attack second enemy for 5 damage."),("effect",Object (fromList [("amount",Number 5.0),("kind",String "SplashDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-steak-attack",fromList [("description",String "Attack for 20 more damage, once."),("effect",Object (fromList [("appliesOnce",Bool True),("damageModifier",Number 20.0),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("status-weak",fromList [("description",String "Take 3 extra damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number 3.0),("kind",String "ModifyDamage")])),("trigger",String "WhenDamaged"),("triggeredBy",Object (fromList [("kind",String "Self")]))]),("pet-bat",fromList [("description",String "Start of battle: Make 1 enemy Weak."),("effect",Object (fromList [("kind",String "ApplyStatus"),("status",String "status-weak"),("to",Object (fromList [("kind",String "RandomEnemy"),("n",Number 1.0)]))])),("trigger",String "StartOfBattle"),("triggeredBy",Object (fromList [("kind",String "Player")]))]),("pet-bison",fromList [("description",String "End turn: Gain +2/+2 if there is at least one Lvl. 3 friend."),("effect",Object (fromList [("attackAmount",Number 2.0),("healthAmount",Number 2.0),("kind",String "ModifyStats"),("target",Object (fromList [("kind",String "Self")])),("untilEndOfBattle",Bool False)])),("trigger",String "EndOfTurnWithLvl3Friend"),("triggeredBy",Object (fromList [("kind",String "Player")]))])]
+
+#+begin_src haskell :results output
+import Data.Bifunctor
+import Data.Maybe
+bad = Prelude.filter (isNothing . (parseMaybe parseJSON :: Value -> Maybe Ability) . Object . snd) allAbilities
+length bad
+take 10 bad
+#+end_src
+
+#+RESULTS:
+:
+: > > 0
+: []
+
+** probabilities
+
+#+begin_src haskell
+pp = [(k, Data.Aeson.KeyMap.lookup "probabilities" m) | (k, Object m) <- toList ps]
+length pp
+#+end_src
+
+#+RESULTS:
+: 89
+
+ #+begin_src haskell
+ [k| (k,Nothing) <- pp]
+ #+end_src
+
+ #+RESULTS:
+ | pet-bee | pet-bus | pet-butterfly | pet-chick | pet-dirty-rat | pet-ram | pet-sloth | pet-zombie-cricket | pet-zombie-fly |
+
+  #+begin_src haskell
+  [x|(Error x) <- (fromJSON :: Value -> Result Probability) . Object <$> (mconcat $ (\x' -> [o|(Object o) <- x']) . V.toList <$> [x|(_,Just (Array x)) <- pp])]
+  #+end_src
+
+  #+RESULTS:
+  : []
+
+*** food probs
+#+begin_src haskell
+fp = [(k, Data.Aeson.KeyMap.lookup "probabilities" m) | (k, Object m) <- toList fs]
+length fp
+#+end_src
+
+#+RESULTS:
+: 17
+
+  #+begin_src haskell
+  [x|(Error x) <- (fromJSON :: Value -> Result Probability) . Object <$> (mconcat $ (\x' -> [o|(Object o) <- x']) . V.toList <$> [x|(_,Just (Array x)) <- fp])]
+  #+end_src
+
+  #+RESULTS:
+  : []
+
+** pet
+
+#+begin_src haskell
+bad = Prelude.filter (isNothing . (parseMaybe parseJSON :: Value -> Maybe Pet) . snd) (toList ps)
+take 2 bad
+#+end_src
+
+#+RESULTS:
+: []
+
+
+#+begin_src haskell
+bad = [x|(Error x) <- ((fromJSON :: Value -> Result Pet) . snd) <$> (toList ps)]
+bad
+#+end_src
+
+#+RESULTS:
+: []
+
+
+
+** food
+
+#+begin_src haskell :results output
+bad = Prelude.filter (isNothing . (parseMaybe parseJSON :: Value -> Maybe Food) . snd) (toList fs)
+take 2 bad
+#+end_src
+
+#+RESULTS:
+:
+: []
+
+
+#+begin_src haskell
+bad = [x|(Error x) <- ((fromJSON :: Value -> Result Food) . snd) <$> (toList fs)]
+bad
+#+end_src
+
+#+RESULTS:
+: []

@@ -1,8 +1,0 @@
-cradle:
-  cabal:
-    - path: "./app/sap.hs"
-      component: "sap:exe:sap"
-    - path: "./src"
-      component: "sap:lib"
-    - path: "./test/sap.hs"
-      component: "sap:test:sap"
