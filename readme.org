@@ -10,42 +10,6 @@ https://superauto.pet/
 
 https://github.com/bencoveney/super-auto-pets-db
 
-json from superauto.pet/api.json
-
-#+begin_quote
-export type Pack = "StandardPack" | "ExpansionPack1";
-
-export interface Pet {
-  // The name of the pet.
-  name: String;
-  // The tier the pet appears in.
-  tier: number;
-  // The standard starting attack points for the pet.
-  baseAttack: number;
-  // The standard starting health points for the pet.
-  baseHealth: number;
-  // Which packs the pet appears in.
-  packs?: Pack[];
-  // The ability the pet has at level 1.
-  level1Ability?: Ability;
-  // The ability the pet has at level 2.
-  level2Ability?: Ability;
-  // The ability the pet has at level 3.
-  level3Ability?: Ability;
-}
-
-export interface Ability {
-  // The text description of the ability.
-  description: string;
-  // What behaviour (by the trigger entity) will initiate the ability.
-  trigger: Trigger;
-  // Which entity will trigger the effect.
-  triggeredBy: Target;
-  // What the effect does.
-  effect: Effect;
-}
-#+end_quote
-
 * pragmas and imports
 
 #+begin_src haskell
@@ -80,7 +44,7 @@ flip evalState s startBoard
 
 #+RESULTS:
 :
-: Board {hearts = 10, deck = Deck {deckV = [Nothing,Nothing,Nothing,Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = [Just (UnFrozen,DeckPet {deckPet = "pet-mosquito", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-ant", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing})]}, foodShop = FoodShop {foodShopV = [Just (UnFrozen,"food-apple")]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = "turn-1"}
+: Board {hearts = 10, deck = Deck {deckV = [Nothing,Nothing,Nothing,Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = [Just (UnFrozen,DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing})]}, foodShop = FoodShop {foodShopV = [Just (UnFrozen,"food-honey")]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = "turn-1"}
 
 #+begin_src haskell :results output
 length $ foods s
@@ -1485,16 +1449,29 @@ flip evalState s $ midRoll `mPlug` (recruitPet tl `mPlug` (recruitPet tl `mPlug`
 
 #+begin_src haskell
 :set -XOverloadedLabels
+tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]]
 b2 = flip evalState s (replicateM 2 $ recruitPetAlways tl =<< startBoard)
 fmap (view #deck) <$> b2
 #+end_src
 
 #+RESULTS:
-: > [Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-ant", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-mosquito", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}),Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-beaver", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-pig", attack = 3, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-horse", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]})]
+: > > [Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}),Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-pig", attack = 3, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-cricket", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-duck", attack = 1, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]})]
 
 
 * simulating a tier 1 fight
 
-#+begin_src haskell
-
+#+begin_src haskell :results output
+:set -XOverloadedLabels
+b1 = fromMaybe (error "wtf") <$> (recruitPetAlways tl =<< startBoard)
+b2 = fromMaybe (error "wtf") <$> (recruitPetAlways tl =<< startBoard)
+b = Battle <$> (view #deck <$> b1) <*> (view #deck <$> b2) <*> pure 0
 #+end_src
+
+
+#+begin_src haskell
+s' = flip evalState s
+s' b
+#+end_src
+
+#+RESULTS:
+: Battle {deckL = Deck {deckV = [Just (DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-otter", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}, deckR = Deck {deckV = [Just (DeckPet {deckPet = "pet-pig", attack = 3, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-cricket", attack = 1, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-duck", attack = 1, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}, battleTurn = 0}

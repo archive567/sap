@@ -8,15 +8,16 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
 {-# HLINT ignore "Use if" #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Sap where
 
 import Control.Monad
 import Control.Monad.State.Lazy
-import Data.Aeson
+import Data.Aeson hiding (Key)
 import qualified Data.Aeson.Key as A
 import qualified Data.Aeson.KeyMap as A
-import Data.Aeson.Types
+import Data.Aeson.Types hiding (Key)
 import Data.Bifunctor
 import Data.Bool
 import qualified Data.ByteString.Lazy as B
@@ -32,20 +33,43 @@ import Optics.Zoom
 import System.Random
 import Text.Read (readMaybe)
 import Prelude
+import GHC.Exts
 
-type TurnKey = Key
-type PetKey = Key
-type FoodKey = Key
-type StatusKey = Key
+newtype Key a = Key { aKey :: A.Key } deriving (Eq, Show, Ord, Generic, IsString, FromJSON)
+
+data FoodKey
+data PetKey
+data StatusKey
+data TurnKey
+
+instance Pretty (Key FoodKey) where
+  pretty k = do
+    s <- get
+    (Map.!) (view #foods s) k & view (#foodEmoji % #char) & pack & pure
+
+instance Pretty (Key PetKey) where
+  pretty k = do
+    s <- get
+    (Map.!) (view #pets s) k & view (#petEmoji % #char) & pack & pure
+
+instance Pretty (Key StatusKey) where
+  pretty k = do
+    s <- get
+    (Map.!) (view #statuses s) k & view (#statusEmoji % #char) & pack & pure
+
+instance Pretty (Key TurnKey) where
+  pretty k = do
+    s <- get
+    (Map.!) (view #turns s) k & view #turnName & pure
 
 mkValue :: IO (Maybe Value)
 mkValue = decode <$> B.readFile "other/sap.json"
 
 data SapState = SapState
-  { foods :: Map.Map FoodKey Food,
-    pets :: Map.Map PetKey Pet,
-    statuses :: Map.Map StatusKey Status,
-    turns :: Map.Map TurnKey Turn,
+  { foods :: Map.Map (Key FoodKey) Food,
+    pets :: Map.Map (Key PetKey) Pet,
+    statuses :: Map.Map (Key StatusKey) Status,
+    turns :: Map.Map (Key TurnKey) Turn,
     gen :: StdGen,
     sapPack :: Pack
   }
@@ -61,10 +85,10 @@ mkSapData :: IO (Either String SapData)
 mkSapData = eitherDecode <$> B.readFile "other/sap.json"
 
 data SapData = SapData
-  { foods_ :: Map.Map FoodKey Food,
-    pets_ :: Map.Map PetKey Pet,
-    statuses_ :: Map.Map StatusKey Status,
-    turns_ :: Map.Map TurnKey Turn
+  { foods_ :: Map.Map (Key FoodKey) Food,
+    pets_ :: Map.Map (Key PetKey) Pet,
+    statuses_ :: Map.Map (Key StatusKey) Status,
+    turns_ :: Map.Map (Key TurnKey) Turn
   }
   deriving (Eq, Show, Generic)
 
@@ -81,14 +105,14 @@ instance FromJSON SapData where
       )
 
 -- | key-value parser.
-kvParser :: (FromJSON a) => Object -> Key -> Parser (Map.Map Key a)
+kvParser :: (FromJSON a) => Object -> Key k -> Parser (Map.Map (Key k) a)
 kvParser v l =
   maybe
     (fail "label not found")
     (withObject "kv" (innerKV 2))
-    (A.lookup l v)
+    (A.lookup (aKey l) v)
 
-innerKV :: FromJSON b => Int -> Object -> Parser (Map.Map Key b)
+innerKV :: FromJSON a => Int -> Object -> Parser (Map.Map (Key k) a)
 innerKV n o =
   bool
     (fail ("innerKV: " <> show (take n errs)))
@@ -97,7 +121,7 @@ innerKV n o =
   where
     res = second (parseEither parseJSON) <$> A.toList o
     errs = [(k, e) | (k, Left e) <- res]
-    x = Map.fromList [(k, e) | (k, Right e) <- res]
+    x = Map.fromList [(Key k, e) | (k, Right e) <- res]
 
 data Pack = StandardPack | ExpansionPack1 | EasterEgg deriving (Generic, Show, Eq)
 
@@ -234,7 +258,7 @@ instance FromJSON DamageModifier where
 
 data Effect
   = AllOf [Effect]
-  | ApplyStatus StatusKey Target
+  | ApplyStatus (Key StatusKey) Target
   | DealDamage Amount Target
   | DiscountFood Amount
   | Evolve Text
@@ -497,7 +521,7 @@ data Board = Board
   { hearts :: Hearts,
     deck :: Deck,
     shop :: Shop,
-    boardTurn :: TurnKey
+    boardTurn :: (Key TurnKey)
   }
   deriving (Generic, Eq, Show)
 
@@ -509,13 +533,13 @@ newtype Deck = Deck
   deriving (Generic, Eq, Show)
 
 data DeckPet = DeckPet
-  { deckPet :: PetKey,
+  { deckPet :: (Key PetKey),
     attack :: Int,
     health :: Int,
     -- until end of battle
     attackUeob :: Int,
     healthUeob :: Int,
-    dpStatus :: Maybe StatusKey
+    dpStatus :: Maybe (Key StatusKey)
   }
   deriving (Generic, Eq, Show)
 
@@ -540,13 +564,13 @@ newtype PetShop = PetShop
   deriving (Generic, Eq, Show)
 
 newtype FoodShop = FoodShop
-  { foodShopV :: V.Vector (Maybe (Frozen, FoodKey))
+  { foodShopV :: V.Vector (Maybe (Frozen, (Key FoodKey)))
   }
   deriving (Generic, Eq, Show)
 
 data PetShopBoosts = PetShopBoosts Int Int deriving (Generic, Eq, Show)
 
-blankBoard :: TurnKey -> State SapState Board
+blankBoard :: (Key TurnKey) -> State SapState Board
 blankBoard t = do
   s <- get
   pure $ Board initialHearts blankDeck (blankShop (animalShopSlots $ (Map.!) (turns s) t) (foodShopSlots $ (Map.!) (turns s) t)) t
@@ -562,10 +586,10 @@ blankShop pss fss = Shop (PetShop (V.replicate pss Nothing)) (FoodShop (V.replic
 
 type TurnNumber = Int
 
-petSlotProbs :: TurnKey -> State SapState [(PetKey, Double)]
+petSlotProbs :: (Key TurnKey) -> State SapState [((Key PetKey), Double)]
 petSlotProbs t = ps <$> get
   where
-    ps s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . petProbabilities) <$> Map.toList (tierPets s)
+    ps s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . Key . A.fromText . turn) . fromJust . petProbabilities) <$> Map.toList (tierPets s)
     tierPets s =
       Map.filter
         ( \x ->
@@ -579,10 +603,10 @@ toTierNumber :: Tier -> Int
 toTierNumber (TierN t) = t
 toTierNumber TierSummoned = 99
 
-foodSlotProbs :: TurnKey -> State SapState [(FoodKey, Double)]
+foodSlotProbs :: (Key TurnKey) -> State SapState [((Key FoodKey), Double)]
 foodSlotProbs t = fs <$> get
   where
-    fs s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . foodProbabilities) <$> Map.toList (tierFoods s)
+    fs s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . Key . A.fromText . turn) . fromJust . foodProbabilities) <$> Map.toList (tierFoods s)
     tierFoods s =
       Map.filter
         ( \x ->
@@ -614,7 +638,7 @@ rva xs = do
 rvas :: (Foldable t, RandomGen g) => Int -> t (a, Double) -> State g [a]
 rvas n xs = replicateM n (rva xs)
 
-mkDeckPet :: PetShopBoosts -> PetKey -> State SapState DeckPet
+mkDeckPet :: PetShopBoosts -> (Key PetKey) -> State SapState DeckPet
 mkDeckPet (PetShopBoosts a h) k = do
   s <- get
   pure $
@@ -647,13 +671,13 @@ midRoll b
   | view #hearts b == 0 = pure Nothing
   | otherwise = (fmap (Just . over #hearts (\x -> x - 1))) (roll b)
 
-newShopPet :: TurnKey -> PetShopBoosts -> State SapState DeckPet
+newShopPet :: (Key TurnKey) -> PetShopBoosts -> State SapState DeckPet
 newShopPet t psb = do
   xs <- (fmap cumProbs . petSlotProbs) t
   k <- zoom #gen (rva xs)
   mkDeckPet psb k
 
-newShopFood :: TurnKey -> State SapState FoodKey
+newShopFood :: (Key TurnKey) -> State SapState (Key FoodKey)
 newShopFood t = do
   xs <- (fmap cumProbs . foodSlotProbs) t
   zoom #gen (rva xs)
@@ -663,7 +687,7 @@ newTurn b = do
   let b' = b & over #boardTurn incTurn & set #hearts initialHearts
   roll b'
 
-incTurn :: TurnKey -> TurnKey
+incTurn :: (Key TurnKey) -> (Key TurnKey)
 incTurn "turn-1" = "turn-2"
 incTurn "turn-2" = "turn-3"
 incTurn "turn-3" = "turn-4"
@@ -812,9 +836,9 @@ unfreezeFood i b
   where
     i' = view (#shop % #foodShop % #foodShopV) b V.! i
 
-type PetTierList = [[PetKey]]
+type PetTierList = [[(Key PetKey)]]
 
-matchPT :: PetTierList -> [(PetKey, a)] -> State SapState (Maybe a)
+matchPT :: PetTierList -> [((Key PetKey), a)] -> State SapState (Maybe a)
 matchPT pt l = fmap (fmap (l' Map.!)) $
   zoom #gen $
   foldr (\xs acc -> bool (pick xs) acc (null xs)) (pure Nothing) pt'
@@ -847,7 +871,7 @@ mPlug f mb = do
     Nothing -> pure Nothing
     Just b'' -> f b''
 
-shopPetsI :: Board -> [(PetKey, Int)]
+shopPetsI :: Board -> [((Key PetKey), Int)]
 shopPetsI b = V.ifoldl' (\acc i a -> maybe acc (\x -> (x,i):acc) a) [] $
   fmap (fmap (deckPet . snd)) (view (#shop % #petShop % #petShopV) b)
 
@@ -865,3 +889,6 @@ data BeforeStart
 
 battle :: Deck -> Deck -> Battle BeforeStart
 battle d d' = Battle d d' 0
+
+class Pretty a where
+  pretty :: a -> State SapState Text
