@@ -71,6 +71,46 @@ import Control.Monad.State.Lazy
 import Optics.Extra
 #+end_src
 
+* SapState
+
+#+begin_src haskell :results output
+s <- sapState StandardPack
+flip evalState s startBoard
+#+end_src
+
+#+RESULTS:
+:
+: Board {hearts = 10, deck = Deck {deckV = [Nothing,Nothing,Nothing,Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = [Just (UnFrozen,DeckPet {deckPet = "pet-mosquito", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-ant", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing})]}, foodShop = FoodShop {foodShopV = [Just (UnFrozen,"food-apple")]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = "turn-1"}
+
+#+begin_src haskell :results output
+length $ foods s
+length $ pets s
+length $ statuses s
+length $ turns s
+#+end_src
+
+#+RESULTS:
+: 17
+: 89
+: 10
+: 11
+
+** adhoc error checking
+
+#+begin_src haskell :results output
+head [e|(Error e) <- (fromJSON :: Value -> Result Pet) . snd <$> toList ps]
+#+end_src
+
+#+RESULTS:
+: parsing Status failed, expected Object, but encountered String
+
+#+begin_src haskell :results output
+head $ snd <$> toList ss
+#+end_src
+
+#+RESULTS:
+: Object (fromList [("ability",Object (fromList [("description",String "Attack for 5 more damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number 5.0),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))])),("id",String "status-bone-attack"),("image",Object (fromList [("commit",String "793a6a93f303c08877dd6eb589b2fabb3d1c45ee"),("source",String "twemoji"),("unicodeCodePoint",String "\127830")])),("name",String "Bone Attack")])
+
 * initial JSON data exploration
 ** json file as Value
 
@@ -1317,50 +1357,8 @@ bad
 : []
 
 
-* SapData
-
-#+begin_src haskell :results output
-s <- either fail pure =<< mkSapData
-#+end_src
-
-#+RESULTS:
-
-
-#+begin_src haskell :results output
-length $ foods s
-length $ pets s
-length $ statuses s
-length $ turns s
-#+end_src
-
-#+RESULTS:
-: 17
-: 89
-: 10
-: 11
-
-** adhoc error checking
-
-#+begin_src haskell :results output
-head [e|(Error e) <- (fromJSON :: Value -> Result Pet) . snd <$> toList ps]
-#+end_src
-
-#+RESULTS:
-: parsing Status failed, expected Object, but encountered String
-
-#+begin_src haskell :results output
-head $ snd <$> toList ss
-#+end_src
-
-#+RESULTS:
-: Object (fromList [("ability",Object (fromList [("description",String "Attack for 5 more damage."),("effect",Object (fromList [("appliesOnce",Bool False),("damageModifier",Number 5.0),("kind",String "ModifyDamage")])),("trigger",String "WhenAttacking"),("triggeredBy",Object (fromList [("kind",String "Self")]))])),("id",String "status-bone-attack"),("image",Object (fromList [("commit",String "793a6a93f303c08877dd6eb589b2fabb3d1c45ee"),("source",String "twemoji"),("unicodeCodePoint",String "\127830")])),("name",String "Bone Attack")])
-
-
 * Next Steps
 
-- [ ] ~Strategy~
-    strat :: Board -> [Action]
-    strats :: Board -> Actions [Action] ZeroHearts
 - [X] ~Board~
   - Hearts
   - Deck
@@ -1380,24 +1378,21 @@ head $ snd <$> toList ss
     - PetBoosts
       Attack
       Health
+- [X] simulate the initial ~Board~
+- [X] ~Action~
 
-- [ ] simulate the initial ~Board~
-- [ ] ~Action~
-
-    #+begin_example
-    Shuffle (PetShop (Position Occupied))
-    Recruit (PetShop (Position Occupied)) (Deck (Position Vacancy))
-    Eat (FoodShop (Position Occupied)) (Target (Deck (Position Occupied)) | NoTarget)
-    Roll
-    Fight
-    Freeze (PetShop (Position Occupied))
-    Freeze (FoodShop (Position Occupied))
-    UnFreeze (PetShop (Position Occupied))
-    UnFreeze (FoodShop (Position Occupied))
-    #+end_example
-- [ ] roll :: Shop -> Shop
-- [ ] act :: Action -> Board -> Board
+  - [X] Shuffle (PetShop (Position Occupied))
+  - [X] Recruit (PetShop (Position Occupied)) (Deck (Position Vacancy))
+  - [X] Eat (FoodShop (Position Occupied)) (Target (Deck (Position Occupied)) NoTarget)
+  - [X] Roll
+  - [X] Freeze (PetShop (Position Occupied))
+  - [X] Freeze (FoodShop (Position Occupied))
+  - [X] UnFreeze (PetShop (Position Occupied))
+  - [X] UnFreeze (FoodShop (Position Occupied))
 - [ ] the ~AlwaysRecruit~ ~Strategy~
+- [ ] ~Strategy~
+    strat :: Board -> [Action]
+    strats :: Board -> Actions [Action] ZeroHearts
 
 ** probabilities
 
@@ -1405,7 +1400,6 @@ pets that don't have probabilities
 
  #+begin_src haskell
  [k| (k, Nothing) <- second petProbabilities <$> pets s]
-["pet-bee","pet-bus","pet-butterfly","pet-chick","pet-dirty-rat","pet-ram","pet-sloth","pet-zombie-cricket","pet-zombie-fly"]
  #+end_src
 
  #+RESULTS:
@@ -1414,7 +1408,7 @@ pets that don't have probabilities
  Tier 1 pets from the StandardPack
 
  #+begin_src haskell
- kp = Prelude.filter ((\x -> (List.elem StandardPack . packs $ x) && (isJust . petProbabilities $ x) && (TierN 1 == tier x)) . snd) $ pets s
+ kp = Prelude.filter ((\x -> (List.elem StandardPack . packs $ x) && (isJust . petProbabilities $ x) && (TierN 1 == tier x)) . snd) $ Map.toList (pets s)
  length kp
  putStrLn $ mconcat $ char . petEmoji . snd <$> kp
  #+end_src
@@ -1428,146 +1422,6 @@ pets that don't have probabilities
 
  #+RESULTS:
  : 1.0000000000000002
-
- #+begin_src haskell
- :t turns s
- :t Turn
- :i Turn
- #+end_src
-
- #+RESULTS:
- #+begin_example
- type Turn :: *
- data Turn
-   = Turn {animalShopSlots :: Int,
-           foodShopSlots :: Int,
-           turnId :: Text,
-           index :: Int,
-           levelUpTier :: Int,
-           livesLost :: Int,
-           turnName :: Text,
-           tiersAvailable :: Int}
-     -- Defined at src/Sap.hs:77:1
- instance Eq Turn -- Defined at src/Sap.hs:87:30
- instance Show Turn -- Defined at src/Sap.hs:87:15
- instance Generic Turn -- Defined at src/Sap.hs:87:21
- instance FromJSON Turn -- Defined at src/Sap.hs:89:10
- type instance Rep Turn
-   = D1
-       ('MetaData "Turn" "Sap" "sap-0.0.1-inplace" 'False)
-       (C1
-          ('MetaCons "Turn" 'PrefixI 'True)
-          (((S1
-               ('MetaSel
-                  ('Just "animalShopSlots")
-                  'NoSourceUnpackedness
-                  'NoSourceStrictness
-                  'DecidedLazy)
-               (Rec0 Int)
-             :*: S1
-                   ('MetaSel
-                      ('Just "foodShopSlots")
-                      'NoSourceUnpackedness
-                      'NoSourceStrictness
-                      'DecidedLazy)
-                   (Rec0 Int))
-            :*: (S1
-                   ('MetaSel
-                      ('Just "turnId")
-                      'NoSourceUnpackedness
-                      'NoSourceStrictness
-                      'DecidedLazy)
-                   (Rec0 Text)
-                 :*: S1
-                       ('MetaSel
-                          ('Just "index")
-                          'NoSourceUnpackedness
-                          'NoSourceStrictness
-                          'DecidedLazy)
-                       (Rec0 Int)))
-           :*: ((S1
-                   ('MetaSel
-                      ('Just "levelUpTier")
-                      'NoSourceUnpackedness
-                      'NoSourceStrictness
-                      'DecidedLazy)
-                   (Rec0 Int)
-                 :*: S1
-                       ('MetaSel
-                          ('Just "livesLost")
-                          'NoSourceUnpackedness
-                          'NoSourceStrictness
-                          'DecidedLazy)
-                       (Rec0 Int))
-                :*: (S1
-                       ('MetaSel
-                          ('Just "turnName")
-                          'NoSourceUnpackedness
-                          'NoSourceStrictness
-                          'DecidedLazy)
-                       (Rec0 Text)
-                     :*: S1
-                           ('MetaSel
-                              ('Just "tiersAvailable")
-                              'NoSourceUnpackedness
-                              'NoSourceStrictness
-                              'DecidedLazy)
-                           (Rec0 Int)))))
-     -- Defined at src/Sap.hs:87:21
- #+end_example
-
- #+begin_src haskell
- turns s
- #+end_src
-
- #+RESULTS:
- | turn-1  | Turn | (animalShopSlots = 3 foodShopSlots = 1 turnId = turn-1 index = 1 levelUpTier = 2 livesLost = 1 turnName = Turn 1 tiersAvailable = 1)     |
- | turn-10 | Turn | (animalShopSlots = 5 foodShopSlots = 2 turnId = turn-10 index = 10 levelUpTier = 6 livesLost = 4 turnName = Turn 10 tiersAvailable = 5)  |
- | turn-11 | Turn | (animalShopSlots = 5 foodShopSlots = 2 turnId = turn-11 index = 11 levelUpTier = 6 livesLost = 5 turnName = Turn 11+ tiersAvailable = 6) |
- | turn-2  | Turn | (animalShopSlots = 3 foodShopSlots = 1 turnId = turn-2 index = 2 levelUpTier = 2 livesLost = 1 turnName = Turn 2 tiersAvailable = 1)     |
- | turn-3  | Turn | (animalShopSlots = 3 foodShopSlots = 2 turnId = turn-3 index = 3 levelUpTier = 3 livesLost = 2 turnName = Turn 3 tiersAvailable = 2)     |
- | turn-4  | Turn | (animalShopSlots = 3 foodShopSlots = 2 turnId = turn-4 index = 4 levelUpTier = 3 livesLost = 2 turnName = Turn 4 tiersAvailable = 2)     |
- | turn-5  | Turn | (animalShopSlots = 4 foodShopSlots = 2 turnId = turn-5 index = 5 levelUpTier = 4 livesLost = 3 turnName = Turn 5 tiersAvailable = 3)     |
- | turn-6  | Turn | (animalShopSlots = 4 foodShopSlots = 2 turnId = turn-6 index = 6 levelUpTier = 4 livesLost = 3 turnName = Turn 6 tiersAvailable = 3)     |
- | turn-7  | Turn | (animalShopSlots = 4 foodShopSlots = 2 turnId = turn-7 index = 7 levelUpTier = 5 livesLost = 3 turnName = Turn 7 tiersAvailable = 4)     |
- | turn-8  | Turn | (animalShopSlots = 4 foodShopSlots = 2 turnId = turn-8 index = 8 levelUpTier = 5 livesLost = 3 turnName = Turn 8 tiersAvailable = 4)     |
- | turn-9  | Turn | (animalShopSlots = 5 foodShopSlots = 2 turnId = turn-9 index = 9 levelUpTier = 6 livesLost = 4 turnName = Turn 9 tiersAvailable = 5)     |
-
-
-** a tier-1 initial roll
-
- #+begin_src haskell
- petSlotProbs s StandardPack "turn-1"
- #+end_src
-
- #+RESULTS:
- | pet-ant      | 0.1111111111111111 |
- | pet-beaver   | 0.1111111111111111 |
- | pet-cricket  | 0.1111111111111111 |
- | pet-duck     | 0.1111111111111111 |
- | pet-fish     | 0.1111111111111111 |
- | pet-horse    | 0.1111111111111111 |
- | pet-mosquito | 0.1111111111111111 |
- | pet-otter    | 0.1111111111111111 |
- | pet-pig      | 0.1111111111111111 |
-
-#+begin_src haskell
-g <- initStdGen
-p0 = mconcat $ char . petEmoji . (Map.!) (pets s) <$> (flip evalState g $ rvas 3 (cumProbs $ petSlotProbs s StandardPack "turn-1"))
-f0 = mconcat $ char . foodEmoji . (Map.!) (foods s) <$> (flip evalState g $ rvas 1 (cumProbs $ foodSlotProbs s StandardPack "turn-1"))
-putStrLn $ p0 <> " " <> f0
-#+end_src
-
-#+RESULTS:
-: > > 🦟🐎🐟 🍯
-
-#+begin_src haskell
-(cumProbs $ foodSlotProbs s StandardPack "turn-1")
-#+end_src
-
-#+RESULTS:
-| food-apple | 0.5 |
-| food-honey | 1.0 |
 
 ** zoom
 
@@ -1589,4 +1443,58 @@ putStrLn $ p0 <> " " <> f0
 :   :: TurnKey
 :      -> StateT SapState Data.Functor.Identity.Identity [(Key, Double)]
 
+** a tier-1 initial roll
+
+ #+begin_src haskell
+ s' = flip evalState s
+ s' $ startBoard
+ #+end_src
+
+ #+RESULTS:
+ : Board {hearts = 10, deck = Deck {deckV = [Nothing,Nothing,Nothing,Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = [Just (UnFrozen,DeckPet {deckPet = "pet-beaver", attack = 2, health = 2, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-mosquito", attack = 2, health = 2, dpStatus = Nothing}),Just (UnFrozen,DeckPet {deckPet = "pet-ant", attack = 2, health = 1, dpStatus = Nothing})]}, foodShop = FoodShop {foodShopV = [Just (UnFrozen,"food-honey")]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = "turn-1"}
+
+#+begin_src haskell
+view (#foodAbility % #effect) $ (Map.!) (foods s) "food-apple"
+#+end_src
+
+#+RESULTS:
+: ModifyStats False (Just (Amount 1)) (Just (Amount 1)) (Target {targetType = PurchaseTarget, targetN = Nothing, includingFutures = Nothing})
+
+** ToDo alwaysRecruit
+
+- [ ] missing pet effects on purchase
+- [ ] missing Sell action & sell effects
+
+#+begin_src haskell :results output
+tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]]
+#+end_src
+
+#+RESULTS:
+
+#+begin_src haskell
+flip evalState s (recruitPet tl `mPlug` (recruitPet tl `mPlug` (recruitPet tl =<< startBoard)))
+#+end_src
+
+#+RESULTS:
+: Just (Board {hearts = 1, deck = Deck {deckV = [Just (DeckPet {deckPet = "pet-horse", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-ant", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = [Nothing,Nothing,Nothing]}, foodShop = FoodShop {foodShopV = [Just (UnFrozen,"food-apple")]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = "turn-1"})
+
+#+begin_src haskell :results output
+flip evalState s $ midRoll `mPlug` (recruitPet tl `mPlug` (recruitPet tl `mPlug` (recruitPet tl =<< startBoard)))
+#+end_src
+
+
+#+begin_src haskell
+:set -XOverloadedLabels
+b2 = flip evalState s (replicateM 2 $ recruitPetAlways tl =<< startBoard)
+fmap (view #deck) <$> b2
+#+end_src
+
+#+RESULTS:
+: > [Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-fish", attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-ant", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-mosquito", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}),Just (Deck {deckV = [Just (DeckPet {deckPet = "pet-beaver", attack = 2, health = 2, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-pig", attack = 3, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = "pet-horse", attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]})]
+
+
 * simulating a tier 1 fight
+
+#+begin_src haskell
+
+#+end_src

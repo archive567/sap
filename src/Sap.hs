@@ -5,6 +5,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wall #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant bracket" #-}
+{-# HLINT ignore "Use if" #-}
 
 module Sap where
 
@@ -21,10 +24,10 @@ import Data.Foldable
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
-import Data.Text (Text, unpack)
+import Data.Text (Text, unpack, pack)
 import qualified Data.Vector as V
-import GHC.Generics
-import Optics.Core
+import GHC.Generics hiding (to, from)
+import Optics.Core hiding (to)
 import Optics.Zoom
 import System.Random
 import Text.Read (readMaybe)
@@ -44,7 +47,7 @@ data SapState = SapState
     statuses :: Map.Map StatusKey Status,
     turns :: Map.Map TurnKey Turn,
     gen :: StdGen,
-    pack :: Pack
+    sapPack :: Pack
   }
   deriving (Show, Generic, Eq)
 
@@ -231,7 +234,7 @@ instance FromJSON DamageModifier where
 
 data Effect
   = AllOf [Effect]
-  | ApplyStatus Text Target
+  | ApplyStatus StatusKey Target
   | DealDamage Amount Target
   | DiscountFood Amount
   | Evolve Text
@@ -449,7 +452,8 @@ data Food = Food
     foodTier :: Tier,
     foodPacks :: [Pack],
     foodProbabilities :: Maybe [Probability],
-    foodNotes :: Maybe Text
+    foodNotes :: Maybe Text,
+    foodAbility :: Ability
   }
   deriving (Eq, Show, Generic)
 
@@ -466,6 +470,7 @@ instance FromJSON Food where
             <*> v .: "packs"
             <*> v .:? "probabilities"
             <*> v .:? "notes"
+            <*> v .: "ability"
       )
 
 data Status = Status
@@ -491,7 +496,8 @@ instance FromJSON Status where
 data Board = Board
   { hearts :: Hearts,
     deck :: Deck,
-    shop :: Shop
+    shop :: Shop,
+    boardTurn :: TurnKey
   }
   deriving (Generic, Eq, Show)
 
@@ -503,10 +509,13 @@ newtype Deck = Deck
   deriving (Generic, Eq, Show)
 
 data DeckPet = DeckPet
-  { deckPet :: Key,
+  { deckPet :: PetKey,
     attack :: Int,
     health :: Int,
-    dpStatus :: Maybe Status
+    -- until end of battle
+    attackUeob :: Int,
+    healthUeob :: Int,
+    dpStatus :: Maybe StatusKey
   }
   deriving (Generic, Eq, Show)
 
@@ -540,7 +549,7 @@ data PetShopBoosts = PetShopBoosts Int Int deriving (Generic, Eq, Show)
 blankBoard :: TurnKey -> State SapState Board
 blankBoard t = do
   s <- get
-  pure $ Board initialHearts blankDeck (blankShop (animalShopSlots $ (Map.!) (turns s) t) (foodShopSlots $ (Map.!) (turns s) t))
+  pure $ Board initialHearts blankDeck (blankShop (animalShopSlots $ (Map.!) (turns s) t) (foodShopSlots $ (Map.!) (turns s) t)) t
 
 initialHearts :: Hearts
 initialHearts = 10
@@ -556,11 +565,11 @@ type TurnNumber = Int
 petSlotProbs :: TurnKey -> State SapState [(PetKey, Double)]
 petSlotProbs t = ps <$> get
   where
-    ps s = second (per (pack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . petProbabilities) <$> Map.toList (tierPets s)
+    ps s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . petProbabilities) <$> Map.toList (tierPets s)
     tierPets s =
       Map.filter
         ( \x ->
-            (List.elem (pack s) . packs $ x)
+            (List.elem (sapPack s) . packs $ x)
               && (isJust . petProbabilities $ x)
               && (toTierNumber (tier x) <= (turns s Map.! t & index))
         )
@@ -573,11 +582,11 @@ toTierNumber TierSummoned = 99
 foodSlotProbs :: TurnKey -> State SapState [(FoodKey, Double)]
 foodSlotProbs t = fs <$> get
   where
-    fs s = second (per (pack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . foodProbabilities) <$> Map.toList (tierFoods s)
+    fs s = second (per (sapPack s) . perSlot . head . Prelude.filter ((== t) . A.fromText . turn) . fromJust . foodProbabilities) <$> Map.toList (tierFoods s)
     tierFoods s =
       Map.filter
         ( \x ->
-            (List.elem (pack s) . foodPacks $ x)
+            (List.elem (sapPack s) . foodPacks $ x)
               && (isJust . foodProbabilities $ x)
               && (toTierNumber (foodTier x) <= (turns s Map.! t & index))
         )
@@ -612,25 +621,31 @@ mkDeckPet (PetShopBoosts a h) k = do
     DeckPet k
     (a + fromAttack (baseAttack ((Map.!) (pets s) k)))
     (h + fromHealth (baseHealth ((Map.!) (pets s) k)))
+    0
+    0
     Nothing
 
-roll :: TurnKey -> Board -> State SapState Board
-roll t b = do
+roll :: Board -> State SapState Board
+roll b = do
   newPetShop <- mapM mkPet (view (#shop % #petShop % #petShopV) b)
   newFoodShop <- mapM mkFood (view (#shop % #foodShop % #foodShopV) b)
   pure $
     b
-      & #hearts %~ (\x -> x - 1)
       & #shop % #petShop % #petShopV .~ newPetShop
       & #shop % #foodShop % #foodShopV .~ newFoodShop
   where
     psb = view (#shop % #petShopBoosts) b
 
     mkPet slot =
-      bool (pure slot) (fmap (Just . (UnFrozen,)) (newShopPet t psb)) (isNothing slot || Just UnFrozen == fmap fst slot)
+      bool (pure slot) (fmap (Just . (UnFrozen,)) (newShopPet (boardTurn b) psb)) (isNothing slot || Just UnFrozen == fmap fst slot)
 
     mkFood slot =
-      bool (pure slot) (fmap (Just . (UnFrozen,)) (newShopFood t)) (isNothing slot || Just UnFrozen == fmap fst slot)
+      bool (pure slot) (fmap (Just . (UnFrozen,)) (newShopFood (boardTurn b))) (isNothing slot || Just UnFrozen == fmap fst slot)
+
+midRoll :: Board -> State SapState (Maybe Board)
+midRoll b
+  | view #hearts b == 0 = pure Nothing
+  | otherwise = (fmap (Just . over #hearts (\x -> x - 1))) (roll b)
 
 newShopPet :: TurnKey -> PetShopBoosts -> State SapState DeckPet
 newShopPet t psb = do
@@ -642,3 +657,211 @@ newShopFood :: TurnKey -> State SapState FoodKey
 newShopFood t = do
   xs <- (fmap cumProbs . foodSlotProbs) t
   zoom #gen (rva xs)
+
+newTurn :: Board -> State SapState Board
+newTurn b = do
+  let b' = b & over #boardTurn incTurn & set #hearts initialHearts
+  roll b'
+
+incTurn :: TurnKey -> TurnKey
+incTurn "turn-1" = "turn-2"
+incTurn "turn-2" = "turn-3"
+incTurn "turn-3" = "turn-4"
+incTurn "turn-4" = "turn-5"
+incTurn "turn-5" = "turn-6"
+incTurn "turn-6" = "turn-7"
+incTurn "turn-7" = "turn-8"
+incTurn "turn-8" = "turn-9"
+incTurn "turn-9" = "turn-10"
+incTurn "turn-10" = "turn-11"
+incTurn "turn-11" = "turn-12"
+incTurn _ = "turn-12"
+
+startBoard :: State SapState Board
+startBoard = roll =<< blankBoard "turn-1"
+
+shuffle :: Int -> Int -> Board -> Either Text Board
+shuffle from to b
+  | isNothing from' = Left ("No DeckPet @ " <> pack (show from))
+  | to == from = Left "Shuffle NoOp"
+  | otherwise = Right (shuffleDeck from to b)
+  where
+    from' = view (#deck % #deckV) b V.! from
+
+del_ :: Int -> V.Vector a -> V.Vector a
+del_ x v = V.take x v <> V.drop (x+1) v
+
+one_ :: Int -> V.Vector a -> V.Vector a
+one_ x v = V.drop x v & V.take 1
+
+ins_ :: Int -> V.Vector a -> V.Vector a -> V.Vector a
+ins_ x v v' = V.take x v <> v' <> V.drop x v
+
+shuffleDeck :: Int -> Int -> Board -> Board
+shuffleDeck from to b =
+  b & (#deck % #deckV) %~ (\v ->
+    ins_ to (del_ from v) (one_ from v))
+
+deckSize :: Int
+deckSize = 5
+
+leftCompact_ :: V.Vector (Maybe a) -> V.Vector (Maybe a)
+leftCompact_ d = d' <> V.replicate (deckSize - V.length d') Nothing
+    where
+      d' = V.filter isJust d
+
+recruit :: Int -> Int -> Board -> Either Text Board
+recruit from to b
+  | isNothing from' = Left ("No ShopPet @ " <> pack (show from))
+  | not vacancy = Left "Deck is full"
+  | otherwise = Right recruit_
+  where
+    from' = view (#shop % #petShop % #petShopV) b V.! from
+    vacancy = not $ V.all isJust (view (#deck % #deckV) b)
+    recruit_ =
+      over (#shop % #petShop % #petShopV) (V.// [(from, Nothing)]) $
+      over #hearts (\x -> x - 3) $
+      over (#deck % #deckV)
+      (\v -> V.take deckSize (ins_ to (leftCompact_ v) (V.singleton (snd <$> from')))) b
+
+eat :: Int -> Maybe Int -> Board -> State SapState (Either Text Board)
+eat from to b
+  | isNothing from' = pure (Left ("No ShopFood @ " <> pack (show from)))
+  | otherwise = do
+      e <- effect'
+      applyEat e from to b
+  where
+    from' = snd <$> view (#shop % #foodShop % #foodShopV) b V.! from
+
+    effect' = do
+      s <- get
+      pure $ view (#foodAbility % #effect) $ (Map.!) (foods s) $
+        fromMaybe (error "wtf") from'
+
+applyEat :: Effect -> Int -> Maybe Int -> Board -> State SapState (Either Text Board)
+applyEat eff from to b = do
+  applyEatEffect eff to (over (#shop % #foodShop % #foodShopV) (V.// [(from, Nothing)]) b)
+
+applyEatEffect :: Effect -> Maybe Int -> Board -> State SapState (Either Text Board)
+applyEatEffect eff to b = case eff of
+  ApplyStatus st (Target PurchaseTarget _ _) ->
+    pure $
+    Right
+    (over (#deck % #deckV)
+     (\v -> v V.//
+       [(to',
+          (set #dpStatus (Just st)) <$> (v V.! to'))
+       ]) b)
+  ModifyStats ueob (Just (Amount h)) (Just (Amount a)) (Target PurchaseTarget _ _) ->
+    pure $
+    Right
+    (over (#deck % #deckV)
+     (\v -> v V.//
+       [(to',
+          (change' <$> (v V.! to')))
+       ]) b)
+    where
+      change' = case ueob of
+        False -> over #attack (+a) . over #health (+h)
+        True -> over #attackUeob (+a) . over #healthUeob (+h)
+  e -> error (show e <> " TBI")
+  where
+    to' = fromMaybe (error "bad from") to
+
+freezePet :: Int -> Board -> Either Text Board
+freezePet i b
+  | isNothing i' = Left ("No ShopPet @ " <> pack (show i))
+  | Just Frozen == (fst <$> i') = Left "Already frozen"
+  | otherwise = Right (over (#shop % #petShop % #petShopV) (\v -> v V.//
+       [(i,
+          (first (const Frozen) <$> (v V.! i)))
+       ]) b)
+  where
+    i' = view (#shop % #petShop % #petShopV) b V.! i
+
+unfreezePet :: Int -> Board -> Either Text Board
+unfreezePet i b
+  | isNothing i' = Left ("No ShopPet @ " <> pack (show i))
+  | Just UnFrozen == (fst <$> i') = Left "Not frozen"
+  | otherwise = Right (over (#shop % #petShop % #petShopV) (\v -> v V.//
+       [(i,
+          (first (const UnFrozen) <$> (v V.! i)))
+       ]) b)
+  where
+    i' = view (#shop % #petShop % #petShopV) b V.! i
+
+freezeFood :: Int -> Board -> Either Text Board
+freezeFood i b
+  | isNothing i' = Left ("No Food @ " <> pack (show i))
+  | Just Frozen == (fst <$> i') = Left "Already frozen"
+  | otherwise = Right (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
+       [(i,
+          (first (const Frozen) <$> (v V.! i)))
+       ]) b)
+  where
+    i' = view (#shop % #foodShop % #foodShopV) b V.! i
+
+unfreezeFood :: Int -> Board -> Either Text Board
+unfreezeFood i b
+  | isNothing i' = Left ("No Food @ " <> pack (show i))
+  | Just UnFrozen == (fst <$> i') = Left "Not frozen"
+  | otherwise = Right (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
+       [(i,
+          (first (const UnFrozen) <$> (v V.! i)))
+       ]) b)
+  where
+    i' = view (#shop % #foodShop % #foodShopV) b V.! i
+
+type PetTierList = [[PetKey]]
+
+matchPT :: PetTierList -> [(PetKey, a)] -> State SapState (Maybe a)
+matchPT pt l = fmap (fmap (l' Map.!)) $
+  zoom #gen $
+  foldr (\xs acc -> bool (pick xs) acc (null xs)) (pure Nothing) pt'
+  where
+    pick list = bool (Just <$> rva (cumProbs $ (,1) <$> list)) (pure $ listToMaybe list) (length list ==1)
+    pt' = List.filter (`elem` (Map.keys l')) <$> pt
+    l' = Map.fromList l
+
+recruitPet :: PetTierList -> Board -> State SapState (Maybe Board)
+recruitPet tl b
+  | view #hearts b < 3 = pure Nothing
+  | otherwise = do
+      p <- pick
+      case p of
+        Nothing -> pure Nothing
+        Just p' -> pure $ either (const Nothing) Just (recruit p' 0 b)
+  where
+    pick = matchPT tl (shopPetsI b)
+
+recruitPetAlways :: PetTierList -> Board -> State SapState (Maybe Board)
+recruitPetAlways tl b
+  | view #hearts b == 0 = pure (Just b)
+  | view #hearts b < 3 = recruitPetAlways tl `mPlug` midRoll b
+  | otherwise = mPlug (recruitPetAlways tl) (recruitPet tl b)
+
+mPlug :: (Board -> State SapState (Maybe Board)) -> State SapState (Maybe Board) -> State SapState (Maybe Board)
+mPlug f mb = do
+  b' <- mb
+  case b' of
+    Nothing -> pure Nothing
+    Just b'' -> f b''
+
+shopPetsI :: Board -> [(PetKey, Int)]
+shopPetsI b = V.ifoldl' (\acc i a -> maybe acc (\x -> (x,i):acc) a) [] $
+  fmap (fmap (deckPet . snd)) (view (#shop % #petShop % #petShopV) b)
+
+
+-- * Battle
+
+data Battle a =
+  Battle {
+  deckL :: Deck,
+  deckR :: Deck,
+  battleTurn :: Int
+  } deriving (Eq, Show, Generic)
+
+data BeforeStart
+
+battle :: Deck -> Deck -> Battle BeforeStart
+battle d d' = Battle d d' 0
