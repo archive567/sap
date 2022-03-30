@@ -1335,7 +1335,6 @@ bad
 : []
 
 * code snippets
-
 ** probabilities
 
 pets that don't have probabilities
@@ -1447,8 +1446,6 @@ prettyShow s (pure b)
 :
 : > > > ₂🦫₂ ₂🐜₁ ₂🐟₃|₂🦫₂ ₁🦦₂ ₃🐖₁
 
-
-
 ** Tier 1, Level 1 Abilities
 
 #+begin_src haskell :results output
@@ -1484,12 +1481,80 @@ s' (bEffects StartOfBattle b)
 #+RESULTS:
 | Right | (1 DealDamage (Amount 1) (Target (targetType = RandomEnemy targetN = Just 1 includingFutures = Nothing))) |
 
-** battle loop
+* loop debug test
+
+#+begin_src haskell :results output
+tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]] :: [[Sap.Key PetKey]]
+bAlways = fromMaybe (error "wtf") <$> (recruitPetAlways tl =<< startBoard)
+s <- sapState StandardPack
+b = flip evalState s $ mkBattle <$> bAlways <*> bAlways
+s' = flip evalState s
+p = prettyShow s
+p (pure b)
+res = loop =<< startP b
+resDebug = loopDebug 6 =<< startP b
+uncurry (\r b -> traverse_ Text.putStrLn ([r] <> [b])) $ bimap (Text.pack . show) (s' . pretty) (s' res)
+uncurry (\r bs -> traverse_ Text.putStrLn ([r] <> take 10 bs)) $ bimap (Text.pack . show) (fmap (s' . pretty)) (s' resDebug)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+
+> > > > > ₃🐖₁ ₂🐜₁ ₂🐎₁|₃🐖₁ ₂🦟₂ ₂🐎₁
+> > WinRight
+|₂🐎₁
+WinRight
+₅🐖₂ ₂🐜⁽₂|₃🐖⁽₁ ₂🦟₂ ₂🐎₁
+₅🐖₂|₂🦟₂ ₂🐎₁
+₅🐖₀|₂🦟⁽₃ ₂🐎₁
+|₂🐎₁
+₃🐖₁ ₂🐜₁|₃🐖₁ ₂🦟₂ ₂🐎₁
+#+end_example
+* level 1 buy and sell effects
+
+#+begin_src haskell :results output
+view #level1Ability $ pets s Map.! "pet-beaver"
+#+end_src
+
+#+RESULTS:
+: Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+
+#+begin_src haskell :results output
+view #level1Ability $ pets s Map.! "pet-otter"
+#+end_src
+
+#+RESULTS:
+: Just (Ability {description = "Buy: Give a random friend +1/+1", trigger = Buy, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False (Just (Amount 1)) (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 1, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+
+#+begin_src haskell :results output
+view #level1Ability $ pets s Map.! "pet-horse"
+#+end_src
+
+#+RESULTS:
+: Just (Ability {description = "Friend summoned: Give it +1 Attack until end of battle", trigger = Summoned, triggeredBy = Target {targetType = EachFriend, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats True (Just (Amount 1)) Nothing (Target {targetType = TriggeringEntity, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+
+#+begin_src haskell :results output
+view #level1Ability $ pets s Map.! "pet-duck"
+#+end_src
+
+#+RESULTS:
+: Just (Ability {description = "Sell: Give shop animals +1 Health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = EachShopAnimal, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+
+#+begin_src haskell :results output
+view #level1Ability $ pets s Map.! "pet-beaver"
+#+end_src
+
+#+RESULTS:
+: Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+* Next development loop
 
 - [X] mozzie hits random pets
 - [X] ant Faint effect
 - [X] zombie cricket summons ok
 - [X] horse on summoned
+- [ ] check otter & horse buy effects
+  - [ ] horse hit itself when bought
+  - [ ] infinite loop
 
 #+begin_src haskell :results output
 tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]] :: [[Sap.Key PetKey]]
@@ -1502,7 +1567,7 @@ prettyShow s (pure b)
 
 #+RESULTS:
 :
-: > > > > ₂🐎₁ ₁🦦₂ ₃🐖₁|₂🐎₁ ₂🦫₂ ₂🐟₃
+: > > > > ₁🦗₂ ₁🦆₃ ₂🦫₂|₁🦗₂ ₁🦆₃ ₄🐎₁
 
 ** startP testing
 #+begin_src haskell :results output
@@ -1592,68 +1657,3 @@ view #level1Ability $ pets s Map.! "pet-horse"
 
 #+RESULTS:
 : Just (Ability {description = "Friend summoned: Give it +1 Attack until end of battle", trigger = Summoned, triggeredBy = Target {targetType = EachFriend, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats True (Just (Amount 1)) Nothing (Target {targetType = TriggeringEntity, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-* loop debug test
-
-#+begin_src haskell :results output
-tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]] :: [[Sap.Key PetKey]]
-bAlways = fromMaybe (error "wtf") <$> (recruitPetAlways tl =<< startBoard)
-s <- sapState StandardPack
-b = flip evalState s $ mkBattle <$> bAlways <*> bAlways
-s' = flip evalState s
-p = prettyShow s
-p (pure b)
-res = loop =<< startP b
-resDebug = loopDebug 6 =<< startP b
-uncurry (\r b -> traverse_ Text.putStrLn ([r] <> [b])) $ bimap (Text.pack . show) (s' . pretty) (s' res)
-uncurry (\r bs -> traverse_ Text.putStrLn ([r] <> take 10 bs)) $ bimap (Text.pack . show) (fmap (s' . pretty)) (s' resDebug)
-#+end_src
-
-#+RESULTS:
-#+begin_example
-
-> > > > > ₃🐖₁ ₂🐜₁ ₂🐎₁|₃🐖₁ ₂🦟₂ ₂🐎₁
-> > WinRight
-|₂🐎₁
-WinRight
-₅🐖₂ ₂🐜⁽₂|₃🐖⁽₁ ₂🦟₂ ₂🐎₁
-₅🐖₂|₂🦟₂ ₂🐎₁
-₅🐖₀|₂🦟⁽₃ ₂🐎₁
-|₂🐎₁
-₃🐖₁ ₂🐜₁|₃🐖₁ ₂🦟₂ ₂🐎₁
-#+end_example
-* level 1 buy and sell effects
-
-#+begin_src haskell :results output
-view #level1Ability $ pets s Map.! "pet-beaver"
-#+end_src
-
-#+RESULTS:
-: Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-
-#+begin_src haskell :results output
-view #level1Ability $ pets s Map.! "pet-otter"
-#+end_src
-
-#+RESULTS:
-: Just (Ability {description = "Buy: Give a random friend +1/+1", trigger = Buy, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False (Just (Amount 1)) (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 1, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-
-#+begin_src haskell :results output
-view #level1Ability $ pets s Map.! "pet-horse"
-#+end_src
-
-#+RESULTS:
-: Just (Ability {description = "Friend summoned: Give it +1 Attack until end of battle", trigger = Summoned, triggeredBy = Target {targetType = EachFriend, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats True (Just (Amount 1)) Nothing (Target {targetType = TriggeringEntity, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-
-#+begin_src haskell :results output
-view #level1Ability $ pets s Map.! "pet-duck"
-#+end_src
-
-#+RESULTS:
-: Just (Ability {description = "Sell: Give shop animals +1 Health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = EachShopAnimal, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-
-#+begin_src haskell :results output
-view #level1Ability $ pets s Map.! "pet-beaver"
-#+end_src
-
-#+RESULTS:
-: Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})

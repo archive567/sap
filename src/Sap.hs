@@ -957,9 +957,8 @@ applyBoardEffect (ModifyStats False (Just (Amount a)) (Just (Amount h)) (Target 
     over (bPet (kth r k b)) (fmap (over #attack (a+)))
     b
 -- horse
-applyBoardEffect (ModifyStats True (Just (Amount a)) (Just (Amount h)) (Target TriggeringEntity Nothing Nothing)) r b = do
+applyBoardEffect (ModifyStats True (Just (Amount a)) Nothing (Target TriggeringEntity Nothing Nothing)) r b = do
   pure $
-    over (bPet r) (fmap (over #healthUeob (h+))) $
     over (bPet r) (fmap (over #attackUeob (a+))) $
     b
 -- duck
