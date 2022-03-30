@@ -9,6 +9,10 @@
 {-# HLINT ignore "Redundant bracket" #-}
 {-# HLINT ignore "Use if" #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# HLINT ignore "Redundant flip" #-}
+{-# OPTIONS_GHC -Wno-type-defaults #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# HLINT ignore "Move brackets to avoid $" #-}
 
 module Sap where
 
@@ -28,12 +32,18 @@ import Data.Maybe
 import Data.Text (Text, unpack, pack)
 import qualified Data.Vector as V
 import GHC.Generics hiding (to, from)
-import Optics.Core hiding (to)
+import Optics.Core
 import Optics.Zoom
 import System.Random
 import Text.Read (readMaybe)
 import Prelude
 import GHC.Exts
+import qualified Data.Char as Char
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
+
+class Pretty a where
+  pretty :: a -> State SapState Text
 
 newtype Key a = Key { aKey :: A.Key } deriving (Eq, Show, Ord, Generic, IsString, FromJSON)
 
@@ -74,6 +84,9 @@ data SapState = SapState
     sapPack :: Pack
   }
   deriving (Show, Generic, Eq)
+
+prettyShow :: (Pretty a) => SapState -> State SapState a -> IO ()
+prettyShow s a = Text.putStrLn $ flip evalState s (pretty =<< a)
 
 sapState :: Pack -> IO SapState
 sapState p = do
@@ -525,12 +538,34 @@ data Board = Board
   }
   deriving (Generic, Eq, Show)
 
-type Hearts = Int
+instance Pretty Board where
+  pretty (Board h d s t) = do
+    h' <- pretty h
+    d' <- pretty d
+    s' <- pretty s
+    t' <- pretty t
+    pure $ Text.intercalate " " [d', s', h', t']
 
+newtype Hearts = Hearts { nhearts :: Int } deriving (Eq, Ord, Show, Generic)
+
+subn :: Int -> Text
+subn x = pack $ (Char.chr . (+8320) . (\c -> c - 48) . Char.ord) <$> show x
+
+instance Pretty Hearts where
+  pretty h = pure $ "\129505" <> subn (view #nhearts h)
+
+-- | A blank position on the deck is mostly a UI feature, and makes no difference to any gameplay.
+-- Because a player can move from one blank position to another, however, the concept is retained so this can be represented.
+--
 newtype Deck = Deck
   { deckV :: V.Vector (Maybe DeckPet)
   }
   deriving (Generic, Eq, Show)
+
+instance Pretty Deck where
+  pretty (Deck v) = do
+    v' <- mapM (maybe (pure "_") pretty) (V.toList v)
+    pure $ Text.intercalate " " v'
 
 data DeckPet = DeckPet
   { deckPet :: (Key PetKey),
@@ -543,6 +578,22 @@ data DeckPet = DeckPet
   }
   deriving (Generic, Eq, Show)
 
+att :: DeckPet -> Int
+att dp = view #attack dp + view #attackUeob dp
+
+hea :: DeckPet -> Int
+hea dp = view #health dp + view #healthUeob dp
+
+instance Pretty DeckPet where
+  pretty dp = do
+    p <- pretty (view #deckPet dp)
+    s <- maybe (pure "") pretty (view #dpStatus dp)
+    pure $
+      subn (view #attack dp + view #attackUeob dp) <>
+      p <>
+      subn (view #health dp + view #healthUeob dp) <>
+      s
+
 data Shop = Shop
   { petShop :: PetShop,
     foodShop :: FoodShop,
@@ -551,6 +602,12 @@ data Shop = Shop
     petShopBoosts :: PetShopBoosts
   }
   deriving (Generic, Eq, Show)
+
+instance Pretty Shop where
+  pretty (Shop ps fs _ _ _) = do
+    ps' <- pretty ps
+    fs' <- pretty fs
+    pure $ ps' <> " " <> fs'
 
 type PetShopSize = Int
 
@@ -563,10 +620,25 @@ newtype PetShop = PetShop
   }
   deriving (Generic, Eq, Show)
 
+instance Pretty PetShop where
+  pretty (PetShop v) = do
+    v' <- mapM (maybe (pure "_")
+                (\(f,k) -> (bool "" frozen (f==Frozen) <>) <$> pretty k)) (V.toList v)
+    pure $ Text.intercalate " " v'
+
 newtype FoodShop = FoodShop
   { foodShopV :: V.Vector (Maybe (Frozen, (Key FoodKey)))
   }
   deriving (Generic, Eq, Show)
+
+frozen :: Text
+frozen = "/9617"
+
+instance Pretty FoodShop where
+  pretty (FoodShop v) = do
+    v' <- mapM (maybe (pure "_")
+                (\(f,k) -> (bool "" frozen (f==Frozen) <>) <$> pretty k)) (V.toList v)
+    pure $ Text.intercalate " " v'
 
 data PetShopBoosts = PetShopBoosts Int Int deriving (Generic, Eq, Show)
 
@@ -576,7 +648,7 @@ blankBoard t = do
   pure $ Board initialHearts blankDeck (blankShop (animalShopSlots $ (Map.!) (turns s) t) (foodShopSlots $ (Map.!) (turns s) t)) t
 
 initialHearts :: Hearts
-initialHearts = 10
+initialHearts = Hearts 10
 
 blankDeck :: Deck
 blankDeck = Deck (V.replicate 5 Nothing)
@@ -638,6 +710,49 @@ rva xs = do
 rvas :: (Foldable t, RandomGen g) => Int -> t (a, Double) -> State g [a]
 rvas n xs = replicateM n (rva xs)
 
+-- | uniform (0,n-1)
+rvi :: (RandomGen g) => Int -> State g Int
+rvi n = do
+  g <- get
+  let (a,g') = uniformR (0 ,n-1) g
+  put g'
+  pure a
+
+-- | reducing finite population n samples
+--
+-- @rvis 52 2@ produces a list containing a random variate between 0 and 51, and an rv between 0 and 50.
+--
+-- >>> let xs = evalState (rvis 52 7) (mkStdGen 42)
+-- >>> xs
+-- [48,23,31,15,16,18,17]
+--
+rvis :: (RandomGen g) => Int -> Int -> State g [Int]
+rvis n k = sequence (rvi . (n -) <$> [0 .. (k - 1)])
+
+-- | Creates sample without replacement given an 'rvis' process.
+--
+-- Computation treats rvis output as indices.
+--
+-- isomorphic to fst . shuffle 52
+--
+-- >>> rvs52 = flip evalState (mkStdGen 42) $ rvis 52 52
+-- >>> ishuffle rvs52
+-- [48,23,32,15,17,20,19,28,11,39,5,18,41,38,37,2,12,16,44,40,29,0,21,4,6,26,22,7,45,25,33,46,14,43,9,3,30,1,13,50,10,36,31,49,35,24,51,47,34,27,8,42]
+--
+-- TODO: refactor the sort
+ishuffle :: (Ord e, Num e) => [e] -> [e]
+ishuffle as = reverse $ go as []
+  where
+    go [] s = s
+    go (x0 : xs) s = go xs (x1 : s)
+      where
+        x1 = foldl' (\acc d -> bool acc (acc + 1) (d <= acc)) x0 (List.sort s)
+
+-- | deal n cards from a fresh, shuffled, standard pack.
+--
+dealN :: (RandomGen g) => Int -> Int -> State g [Int]
+dealN k n = ishuffle <$> rvis k n
+
 mkDeckPet :: PetShopBoosts -> (Key PetKey) -> State SapState DeckPet
 mkDeckPet (PetShopBoosts a h) k = do
   s <- get
@@ -668,8 +783,8 @@ roll b = do
 
 midRoll :: Board -> State SapState (Maybe Board)
 midRoll b
-  | view #hearts b == 0 = pure Nothing
-  | otherwise = (fmap (Just . over #hearts (\x -> x - 1))) (roll b)
+  | view #hearts b == Hearts 0 = pure Nothing
+  | otherwise = (fmap (Just . over #hearts (\(Hearts x) -> Hearts (x - 1)))) (roll b)
 
 newShopPet :: (Key TurnKey) -> PetShopBoosts -> State SapState DeckPet
 newShopPet t psb = do
@@ -705,12 +820,22 @@ startBoard :: State SapState Board
 startBoard = roll =<< blankBoard "turn-1"
 
 shuffle :: Int -> Int -> Board -> Either Text Board
-shuffle from to b
+shuffle from to' b
   | isNothing from' = Left ("No DeckPet @ " <> pack (show from))
-  | to == from = Left "Shuffle NoOp"
-  | otherwise = Right (shuffleDeck from to b)
+  | to' == from = Left "Shuffle NoOp"
+  | otherwise = Right (shuffleDeck from to' b)
   where
     from' = view (#deck % #deckV) b V.! from
+
+merge :: Int -> Int -> Board -> Either Text Board
+merge from to' b
+  | isNothing f = Left ("No DeckPet @ " <> pack (show from))
+  | isNothing t = Left ("No DeckPet @ " <> pack (show to'))
+  | t /= f = Left "No merge for Different Pets"
+  | otherwise = Right (mergeDeck from to' b)
+  where
+    f = view (bPet from) b
+    t = view (bPet to') b
 
 del_ :: Int -> V.Vector a -> V.Vector a
 del_ x v = V.take x v <> V.drop (x+1) v
@@ -725,6 +850,21 @@ shuffleDeck :: Int -> Int -> Board -> Board
 shuffleDeck from to b =
   b & (#deck % #deckV) %~ (\v ->
     ins_ to (del_ from v) (one_ from v))
+
+-- FIXME: not sure what happens to side effect
+mergeDeck :: Int -> Int -> Board -> Board
+mergeDeck from to' b =
+  case (view (bPet from) b, view (bPet to') b) of
+    (Just f, Just t) ->
+      over bDeck (\v -> ins_ from (V.singleton (Just x)) (del_ to' $ del_ from v)) b
+      where
+        x =
+          set #attack (max (view #attack f) (view #attack t) + 1) $
+          set #attack (max (view #attack f) (view #attack t) + 1) $
+          set #dpStatus st
+          f
+        st = listToMaybe $ catMaybes [view #dpStatus f, view #dpStatus t]
+    _ -> b
 
 deckSize :: Int
 deckSize = 5
@@ -744,9 +884,114 @@ recruit from to b
     vacancy = not $ V.all isJust (view (#deck % #deckV) b)
     recruit_ =
       over (#shop % #petShop % #petShopV) (V.// [(from, Nothing)]) $
-      over #hearts (\x -> x - 3) $
+      over #hearts (\(Hearts x) -> Hearts (x - 3)) $
       over (#deck % #deckV)
       (\v -> V.take deckSize (ins_ to (leftCompact_ v) (V.singleton (snd <$> from')))) b
+
+-- * board effects
+-- FIXME:
+-- abstract this pattern
+bPet :: Int -> Lens' Board (Maybe DeckPet)
+bPet pos = lens (toBPet_ pos) (fromBPet_ pos)
+
+fromBPet_ :: Int -> Board -> Maybe DeckPet -> Board
+fromBPet_ k b p = over bDeck (\v -> V.unsafeUpd v [(k,p)]) b
+
+toBPet_ :: Int -> Board -> Maybe DeckPet
+toBPet_ k = (V.! k) . view bDeck
+
+bDeck :: Lens' Board (V.Vector (Maybe DeckPet))
+bDeck = #deck % #deckV
+
+bPetShop :: Lens' Board (V.Vector (Maybe (Frozen, DeckPet)))
+bPetShop = #shop % #petShop % #petShopV
+
+sPet :: Int -> Lens' Board (Maybe (Frozen, DeckPet))
+sPet pos = lens (toSPet_ pos) (fromSPet_ pos)
+
+fromSPet_ :: Int -> Board -> Maybe (Frozen, DeckPet) -> Board
+fromSPet_ k b p = over bPetShop (\v -> V.unsafeUpd v [(k,p)]) b
+
+toSPet_ :: Int -> Board -> Maybe (Frozen, DeckPet)
+toSPet_ k = (V.! k) . view bPetShop
+
+-- forgets index positions in the round-trip
+bDeckI :: Lens' Board (V.Vector DeckPet)
+bDeckI = bDeck % bDeckI_
+
+bDeckI_ :: Iso' (V.Vector (Maybe DeckPet)) (V.Vector DeckPet)
+bDeckI_ = iso V.catMaybes (\v -> fmap Just v <> V.replicate (5 - V.length v) Nothing)
+
+bSize :: Getter Board Int
+bSize = to (V.length . V.filter isJust . view bDeck)
+
+kth :: Int -> Int -> Board -> Int
+kth self kth b =
+  view bDeck b &
+  V.zip (V.fromList [0..]) &
+  V.filter (\(k,p) -> k /= self && isJust p) &
+  (V.! kth) &
+  fst
+
+applyBoardEffectsBy :: Trigger -> (Target -> Bool) -> (Int -> Maybe DeckPet -> Bool) -> Board -> State SapState Board
+applyBoardEffectsBy t target f b = do
+  es <- boardEffectsBy t target f b
+  foldr (>=>) pure (uncurry applyBoardEffect <$> es) b
+
+-- FIXME:
+--
+-- rationalise these effectsby functions
+boardEffectsBy :: Trigger -> (Target -> Bool) -> (Int -> Maybe DeckPet -> Bool) -> Board -> State SapState [(Effect, Int)]
+boardEffectsBy t target f bd = do
+  s <- get
+  pure $ (\l -> [(e,i) | (i,Just e) <- l]) $ (second (fmap (view #effect) . view #level1Ability . (Map.!) (pets s) . deckPet)) <$> (List.filter ((\a -> ((Just True ==) $ fmap (target . view #triggeredBy) a) && ((Just True ==) . (fmap (\x -> view #trigger x == t)) $ a)) . view #level1Ability . (Map.!) (pets s) . deckPet . snd) $ (\x -> [(i,p)| (i, Just p) <- x ]) $ List.filter (uncurry f) $ zip [(0::Int)..] . V.toList . view bDeck $ bd)
+
+applyBoardEffect :: Effect -> Int -> Board -> State SapState Board
+-- otter
+-- FIXME: use beaver logic below
+applyBoardEffect (ModifyStats False (Just (Amount a)) (Just (Amount h)) (Target RandomFriend (Just 1) Nothing)) r b = do
+  let n = view bSize b - 1
+  k <- zoom #gen (rvi n)
+  pure $
+    over (bPet (kth r k b)) (fmap (over #health (h+))) $
+    over (bPet (kth r k b)) (fmap (over #attack (a+)))
+    b
+-- horse
+applyBoardEffect (ModifyStats True (Just (Amount a)) (Just (Amount h)) (Target TriggeringEntity Nothing Nothing)) r b = do
+  pure $
+    over (bPet r) (fmap (over #healthUeob (h+))) $
+    over (bPet r) (fmap (over #attackUeob (a+))) $
+    b
+-- duck
+applyBoardEffect (ModifyStats False Nothing (Just (Amount h)) (Target EachShopAnimal Nothing Nothing)) _ b = do
+  pure $ over bPetShop (fmap (fmap (second (over #health (+h))))) b
+-- beaver
+applyBoardEffect (ModifyStats False Nothing (Just (Amount h)) (Target RandomFriend (Just k) Nothing)) r b = do
+  -- FIXME: seems risky to assume pet is still in the list
+  let n = view bSize b - 1
+  ks <- zoom #gen (dealN n k)
+  pure $
+    foldl' (flip ($)) b (fmap (\k -> over (bPet (kth r k b)) (fmap (over #health (h+)))) ks)
+
+applyBoardEffect eff _ _ = error ("applyBoardEffect: NYI: " <> show eff)
+
+buy :: Int -> Int -> Board -> State SapState (Either Text Board)
+buy from to b = do
+  case recruit from to b of
+    Left e -> pure (Left e)
+    Right b' -> Right <$>
+      (applyBoardEffectsBy Summoned ((==EachFriend) . view #targetType) (\k _ -> k/=to) =<<
+       applyBoardEffectsBy Buy ((==Self) . view #targetType) (\k _ -> k==to)
+       b')
+
+sell :: Int -> Board -> State SapState (Either Text Board)
+sell from b = do
+  case view (bPet from) b of
+    Nothing -> pure (Left "No pet at deck location")
+    Just _ -> Right <$> do
+      set (bPet from) Nothing <$>
+        (applyBoardEffectsBy Sell ((==Self) . view #targetType) (\k _ -> k==from)
+         b)
 
 eat :: Int -> Maybe Int -> Board -> State SapState (Either Text Board)
 eat from to b
@@ -836,6 +1081,8 @@ unfreezeFood i b
   where
     i' = view (#shop % #foodShop % #foodShopV) b V.! i
 
+-- * Strategy
+
 type PetTierList = [[(Key PetKey)]]
 
 matchPT :: PetTierList -> [((Key PetKey), a)] -> State SapState (Maybe a)
@@ -849,19 +1096,19 @@ matchPT pt l = fmap (fmap (l' Map.!)) $
 
 recruitPet :: PetTierList -> Board -> State SapState (Maybe Board)
 recruitPet tl b
-  | view #hearts b < 3 = pure Nothing
+  | view (#hearts % #nhearts) b < 3 = pure Nothing
   | otherwise = do
       p <- pick
       case p of
         Nothing -> pure Nothing
-        Just p' -> pure $ either (const Nothing) Just (recruit p' 0 b)
+        Just p' -> either (const Nothing) Just <$> buy p' 0 b
   where
     pick = matchPT tl (shopPetsI b)
 
 recruitPetAlways :: PetTierList -> Board -> State SapState (Maybe Board)
 recruitPetAlways tl b
-  | view #hearts b == 0 = pure (Just b)
-  | view #hearts b < 3 = recruitPetAlways tl `mPlug` midRoll b
+  | view (#hearts % #nhearts) b == 0 = pure (Just b)
+  | view (#hearts % #nhearts) b < 3 = recruitPetAlways tl `mPlug` midRoll b
   | otherwise = mPlug (recruitPetAlways tl) (recruitPet tl b)
 
 mPlug :: (Board -> State SapState (Maybe Board)) -> State SapState (Maybe Board) -> State SapState (Maybe Board)
@@ -875,20 +1122,224 @@ shopPetsI :: Board -> [((Key PetKey), Int)]
 shopPetsI b = V.ifoldl' (\acc i a -> maybe acc (\x -> (x,i):acc) a) [] $
   fmap (fmap (deckPet . snd)) (view (#shop % #petShop % #petShopV) b)
 
-
 -- * Battle
 
-data Battle a =
+-- indexes of live pets in deck
+-- number of live pets in deck
+-- number of live pets in (friendly|enemy) deck
+-- over (friendly|enemy) i'th live
+
+-- | A battle is a one-way trip: nathing that happens in a battle effects the Deck
+data BattlePet = BattlePet
+  { bpet :: (Key PetKey),
+    battack :: Int,
+    bhealth :: Int,
+    bstatus :: Maybe (Key StatusKey)
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance Pretty BattlePet where
+  pretty bp = do
+    p <- pretty (view #bpet bp)
+    s <- maybe (pure "") pretty (view #bstatus bp)
+    pure $
+      subn (view #battack bp) <>
+      p <>
+      subn (view #bhealth bp) <>
+      s
+
+fromDeckPet :: DeckPet -> BattlePet
+fromDeckPet p = BattlePet (view #deckPet p) (att p) (hea p) (view #dpStatus p)
+
+
+newtype BattleDeck = BattleDeck
+  { bdeckV :: V.Vector BattlePet
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance Pretty BattleDeck where
+  pretty (BattleDeck v) = do
+    v' <- mapM pretty (V.toList v)
+    pure $ Text.intercalate " " v'
+
+prettyReverse :: BattleDeck -> State SapState Text
+prettyReverse (BattleDeck v) = do
+    v' <- mapM pretty (V.toList v)
+    pure $ Text.intercalate " " (reverse v')
+
+newtype Battle =
   Battle {
-  deckL :: Deck,
-  deckR :: Deck,
-  battleTurn :: Int
-  } deriving (Eq, Show, Generic)
+    decks :: (BattleDeck, BattleDeck)
+  } deriving (Eq, Show, Generic, Ord)
 
-data BeforeStart
+instance Pretty Battle where
+  pretty (Battle (l,r)) = do
+    l' <- prettyReverse l
+    r' <- pretty r
+    pure $ Text.intercalate "|" [l', r']
 
-battle :: Deck -> Deck -> Battle BeforeStart
-battle d d' = Battle d d' 0
+mkBattle :: Board -> Board -> Battle
+mkBattle b b' =
+  Battle $ (,)
+  ((view (#deck % #deckV) b) & fmap (fmap fromDeckPet) & V.toList & catMaybes & V.fromList & BattleDeck)
+  ((view (#deck % #deckV) b') & fmap (fmap fromDeckPet) & V.toList & catMaybes & V.fromList & BattleDeck)
 
-class Pretty a where
-  pretty :: a -> State SapState Text
+data Side = SideLeft | SideRight deriving (Eq, Show, Generic)
+
+data Pos = Pos { posSide :: Side, posIndex :: Int } deriving (Eq, Show, Generic)
+
+other :: Side -> Side
+other SideLeft = SideRight
+other SideRight = SideLeft
+
+bdDeck :: Side -> Lens' Battle (V.Vector BattlePet)
+bdDeck SideLeft = #decks % _1 % #bdeckV
+bdDeck SideRight = #decks % _2 % #bdeckV
+
+bdFront :: Side -> Lens' Battle BattlePet
+bdFront s = bdPet (Pos s 0)
+
+bdSize :: Side -> Getter Battle Int
+bdSize SideLeft = to (V.length . view (bdDeck SideLeft))
+bdSize SideRight = to (V.length . view (bdDeck SideRight))
+
+bdPet :: Pos -> Lens' Battle BattlePet
+bdPet pos = lens (toPet_ pos) (fromPet_ pos)
+
+fromPet_ :: Pos -> Battle -> BattlePet -> Battle
+fromPet_ (Pos s k) b p = over (bdDeck s) (\v -> V.unsafeUpd v [(k,p)]) b
+
+toPet_ :: Pos -> Battle -> BattlePet
+toPet_ (Pos s k) = ((V.! k) . view (bdDeck s))
+
+bdFaints :: Side -> Getter Battle (V.Vector Int)
+bdFaints s = to (V.findIndices ((<1) . view #bhealth) . view (bdDeck s))
+
+isFaint :: BattlePet -> Bool
+isFaint = (<=0) . view #bhealth
+
+removeFainters :: Battle -> Battle
+removeFainters b =
+  over (bdDeck SideRight) (V.filter (not . isFaint)) $
+  over (bdDeck SideLeft) (V.filter (not . isFaint)) b
+
+-- FIXME:
+-- level1Effects hard coded
+--
+bdfEffects_ :: Trigger -> (Int -> BattlePet -> Bool) -> BattleDeck -> State SapState [(Effect, Int)]
+bdfEffects_ t f bd = do
+  s <- get
+  pure $ (\l -> [(e,i) | (i,Just e) <- l]) $ (second (fmap (view #effect) . view #level1Ability . (Map.!) (pets s) . bpet)) <$> (List.filter ((Just True ==) . (fmap (\x -> view #trigger x == t)) . view #level1Ability . (Map.!) (pets s) . bpet . snd) $ List.filter (uncurry f) $ zip [(0::Int)..] . V.toList . view #bdeckV $ bd)
+
+bdfEffectsBy_ :: Trigger -> (Target -> Bool) -> (Int -> BattlePet -> Bool) -> BattleDeck -> State SapState [(Effect, Int)]
+bdfEffectsBy_ t target f bd = do
+  s <- get
+  pure $ (\l -> [(e,i) | (i,Just e) <- l]) $ (second (fmap (view #effect) . view #level1Ability . (Map.!) (pets s) . bpet)) <$> (List.filter ((\a -> ((Just True ==) $ fmap (target . view #triggeredBy) a) && ((Just True ==) . (fmap (\x -> view #trigger x == t)) $ a)) . view #level1Ability . (Map.!) (pets s) . bpet . snd) $ List.filter (uncurry f) $ zip [(0::Int)..] . V.toList . view #bdeckV $ bd)
+
+bfEffects :: Trigger -> (Int -> BattlePet -> Bool) -> Battle -> State SapState [(Effect, Pos)]
+bfEffects t f (Battle (l, r)) =
+   (<>) <$>
+   (fmap (second (Pos SideLeft)) <$> (bdfEffects_ t f l)) <*>
+   (fmap (second (Pos SideRight)) <$> (bdfEffects_ t f r))
+
+bfEffectsBy :: Trigger -> (Target -> Bool) -> (Int -> BattlePet -> Bool) -> Battle -> State SapState [(Effect, Pos)]
+bfEffectsBy t target f (Battle (l, r)) =
+   (<>) <$>
+   (fmap (second (Pos SideLeft)) <$> (bdfEffectsBy_ t target f l)) <*>
+   (fmap (second (Pos SideRight)) <$> (bdfEffectsBy_ t target f r))
+
+-- | apply an effect to the Battle
+applyEffect :: Effect -> Pos -> Battle -> State SapState Battle
+-- mosquito
+applyEffect (DealDamage (Amount x) (Target RandomEnemy (Just 1) Nothing)) (Pos side _) b = do
+  let n = view (bdSize (other side)) b
+  r <- zoom #gen (rvi n)
+  pure $ over (bdPet (Pos (other side) r) % #bhealth) (\h -> h - x) b
+-- cricket
+applyEffect (SummonPet p Friendly (Just (Attack a)) (Just (Health h))) (Pos side _) b = do
+  let b' = over (bdDeck side) (V.cons (BattlePet (Key (A.fromText p)) a h Nothing)) b
+  -- FIXME: assumes summoned pets come out one at a time
+  applyFEffectsBy Summoned ((==EachFriend) . view #targetType) (\_ _ -> True) b'
+applyEffect (ModifyStats False (Just (Amount a)) (Just (Amount h)) (Target RandomFriend (Just 1) Nothing)) (Pos side _) b = do
+  let n = view (bdSize side) b - 1
+  r <- zoom #gen (rvi n)
+  pure $
+    over (bdPet (Pos side (r+1)) % #bhealth) (h +) $
+    over (bdPet (Pos side (r+1)) % #battack) (a +)
+    b
+applyEffect (ModifyStats True (Just (Amount a)) Nothing (Target TriggeringEntity Nothing Nothing)) (Pos side _) b = do
+  pure $
+    over (bdPet (Pos side 0) % #battack) (a +)
+    b
+applyEffect eff _ _ = error ("NYI: " <> show eff)
+
+-- A filtered version
+applyFEffects :: Trigger -> (Int -> BattlePet -> Bool) -> Battle -> State SapState Battle
+applyFEffects t f b = do
+  es <- bfEffects t f b
+  foldr (>=>) pure (uncurry applyEffect <$> es) b
+
+applyFEffectsBy :: Trigger -> (Target -> Bool) -> (Int -> BattlePet -> Bool) -> Battle -> State SapState Battle
+applyFEffectsBy t target f b = do
+  es <- bfEffectsBy t target f b
+  foldr (>=>) pure (uncurry applyEffect <$> es) b
+
+startP :: Battle -> State SapState Battle
+startP = fmap removeFainters . applyFEffects StartOfBattle (\_ _ -> True)
+
+data Outcome = WinLeft | WinRight | Draw | ContB deriving (Eq, Ord, Show, Generic)
+
+result :: Battle -> Outcome
+result b =
+  case (view (bdSize SideLeft) b, view (bdSize SideRight) b) of
+    (0, 0) -> Draw
+    (0, _) -> WinRight
+    (_, 0) -> WinLeft
+    (_, _) -> ContB
+
+-- Also:
+-- FIXME:
+-- WhenAttacking
+-- WhenDamaged
+-- Summoned
+fight :: Battle -> State SapState Battle
+fight b = do
+  b0 <- applyFEffects BeforeAttack (\k _ -> bool False True (k==0)) b
+  let b1 = ah SideLeft (ah SideRight b0)
+  -- FIXME:
+  -- Assumes for sure Hurt by the attack.
+  b2 <- applyFEffects Hurt (\k p -> bool False True (k==0 && view #bhealth p > 0)) b1
+  b3 <- applyFEffects Faint (\k p -> bool False True (k==0 && view #bhealth p <= 0)) b2
+  -- FIXME:
+  -- KnockOut requires knowledge of the whole Board. applyFEffects needs refactoring.
+  -- FIXME:
+  -- Does AfterAttack also apply if the pet is already fainted.
+  b4 <- applyFEffects AfterAttack (\k _ -> bool False True (k==0)) b3
+  pure b4
+
+ah :: Side -> Battle -> Battle
+ah s b = over (bdFront s % #bhealth) (\x -> x - view (bdFront (other s) % #battack) b) b
+
+fightP :: Battle -> State SapState Battle
+fightP = fmap removeFainters . fight
+
+loop :: Battle -> State SapState (Outcome, Battle)
+loop b = case result b of
+  ContB -> do
+    b' <- fight b
+    let b'' = removeFainters b'
+    loop b''
+  x -> pure (x,b)
+
+loopDebug :: Int -> Battle -> State SapState (Outcome, [Battle])
+loopDebug x b = go x b []
+  where
+    go x' b' bs = case (x', result b') of
+      (0,r) -> pure (r,reverse (b:bs))
+      (_, ContB) -> do
+        b'' <- fight b'
+        let b''' = removeFainters b''
+        go (x'-1) b''' (b''':b'':bs)
+      (_, r) -> pure (r,reverse (b:bs))
+
+
