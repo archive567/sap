@@ -642,7 +642,7 @@ instance Pretty FoodShop where
 
 data PetShopBoosts = PetShopBoosts Int Int deriving (Generic, Eq, Show)
 
-blankBoard :: (Key TurnKey) -> State SapState Board
+blankBoard :: Key TurnKey -> State SapState Board
 blankBoard t = do
   s <- get
   pure $ Board initialHearts blankDeck (blankShop (animalShopSlots $ (Map.!) (turns s) t) (foodShopSlots $ (Map.!) (turns s) t)) t
@@ -869,25 +869,6 @@ mergeDeck from to' b =
 deckSize :: Int
 deckSize = 5
 
-leftCompact_ :: V.Vector (Maybe a) -> V.Vector (Maybe a)
-leftCompact_ d = d' <> V.replicate (deckSize - V.length d') Nothing
-    where
-      d' = V.filter isJust d
-
-recruit :: Int -> Int -> Board -> Either Text Board
-recruit from to b
-  | isNothing from' = Left ("No ShopPet @ " <> pack (show from))
-  | not vacancy = Left "Deck is full"
-  | otherwise = Right recruit_
-  where
-    from' = view (#shop % #petShop % #petShopV) b V.! from
-    vacancy = not $ V.all isJust (view (#deck % #deckV) b)
-    recruit_ =
-      over (#shop % #petShop % #petShopV) (V.// [(from, Nothing)]) $
-      over #hearts (\(Hearts x) -> Hearts (x - 3)) $
-      over (#deck % #deckV)
-      (\v -> V.take deckSize (ins_ to (leftCompact_ v) (V.singleton (snd <$> from')))) b
-
 -- * board effects
 -- FIXME:
 -- abstract this pattern
@@ -950,16 +931,18 @@ applyBoardEffect :: Effect -> Int -> Board -> State SapState Board
 -- otter
 -- FIXME: use beaver logic below
 applyBoardEffect (ModifyStats False (Just (Amount a)) (Just (Amount h)) (Target RandomFriend (Just 1) Nothing)) r b = do
-  let n = view bSize b - 1
-  k <- zoom #gen (rvi n)
-  pure $
-    over (bPet (kth r k b)) (fmap (over #health (h+))) $
-    over (bPet (kth r k b)) (fmap (over #attack (a+)))
-    b
+  case view bSize b - 1 of
+    0 -> pure b
+    n -> do
+      k <- zoom #gen (rvi n)
+      pure $
+        over (bPet (kth r k b)) (fmap (over #health (h+))) $
+        over (bPet (kth r k b)) (fmap (over #attack (a+)))
+        b
 -- horse
 applyBoardEffect (ModifyStats True (Just (Amount a)) Nothing (Target TriggeringEntity Nothing Nothing)) r b = do
   pure $
-    over (bPet r) (fmap (over #attackUeob (a+))) $
+    over (bPet r) (fmap (over #attackUeob (a+)))
     b
 -- duck
 applyBoardEffect (ModifyStats False Nothing (Just (Amount h)) (Target EachShopAnimal Nothing Nothing)) _ b = do
@@ -967,34 +950,53 @@ applyBoardEffect (ModifyStats False Nothing (Just (Amount h)) (Target EachShopAn
 -- beaver
 applyBoardEffect (ModifyStats False Nothing (Just (Amount h)) (Target RandomFriend (Just k) Nothing)) r b = do
   -- FIXME: seems risky to assume pet is still in the list
-  let n = view bSize b - 1
-  ks <- zoom #gen (dealN n k)
-  pure $
-    foldl' (flip ($)) b (fmap (\k -> over (bPet (kth r k b)) (fmap (over #health (h+)))) ks)
-
+  case view bSize b - 1 of
+    0 -> pure b
+    n -> do
+      ks <- zoom #gen (dealN n k)
+      pure $
+        foldl' (flip ($)) b (fmap (\k -> over (bPet (kth r k b)) (fmap (over #health (h+)))) ks)
 applyBoardEffect eff _ _ = error ("applyBoardEffect: NYI: " <> show eff)
 
-buy :: Int -> Int -> Board -> State SapState (Either Text Board)
-buy from to b = do
-  case recruit from to b of
-    Left e -> pure (Left e)
-    Right b' -> Right <$>
-      (applyBoardEffectsBy Summoned ((==EachFriend) . view #targetType) (\k _ -> k/=to) =<<
-       applyBoardEffectsBy Buy ((==Self) . view #targetType) (\k _ -> k==to)
-       b')
 
-sell :: Int -> Board -> State SapState (Either Text Board)
+-- | transfer pet to the deck
+buy :: Int -> Int -> Board -> State SapState Board
+buy from to b = do
+  let b' = recruit from to b
+  b'' <- applyBoardEffectsBy Buy ((==Self) . view #targetType) (\k _ -> k==to) b'
+  applyBoardEffectsBy Summoned ((==EachFriend) . view #targetType) (\k _ -> k/=to) b''
+
+leftCompact_ :: V.Vector (Maybe a) -> V.Vector (Maybe a)
+leftCompact_ d = d' <> V.replicate (deckSize - V.length d') Nothing
+    where
+      d' = V.filter isJust d
+
+recruit :: Int -> Int -> Board -> Board
+recruit from to b
+  | isNothing from' = error ("No ShopPet @ " <> show from)
+  | not vacancy = error "Deck is full"
+  | otherwise = recruit_
+  where
+    from' = view (#shop % #petShop % #petShopV) b V.! from
+    vacancy = not $ V.all isJust (view (#deck % #deckV) b)
+    recruit_ =
+      over (#shop % #petShop % #petShopV) (V.// [(from, Nothing)]) $
+      over #hearts (\(Hearts x) -> Hearts (x - 3)) $
+      over (#deck % #deckV)
+      (\v -> V.take deckSize (ins_ to (leftCompact_ v) (V.singleton (snd <$> from')))) b
+
+sell :: Int -> Board -> State SapState Board
 sell from b = do
   case view (bPet from) b of
-    Nothing -> pure (Left "No pet at deck location")
-    Just _ -> Right <$> do
+    Nothing -> pure (error "No pet at deck location")
+    Just _ -> do
       set (bPet from) Nothing <$>
         (applyBoardEffectsBy Sell ((==Self) . view #targetType) (\k _ -> k==from)
          b)
 
-eat :: Int -> Maybe Int -> Board -> State SapState (Either Text Board)
+eat :: Int -> Maybe Int -> Board -> State SapState Board
 eat from to b
-  | isNothing from' = pure (Left ("No ShopFood @ " <> pack (show from)))
+  | isNothing from' = pure (error ("No ShopFood @ " <> show from))
   | otherwise = do
       e <- effect'
       applyEat e from to b
@@ -1006,23 +1008,21 @@ eat from to b
       pure $ view (#foodAbility % #effect) $ (Map.!) (foods s) $
         fromMaybe (error "wtf") from'
 
-applyEat :: Effect -> Int -> Maybe Int -> Board -> State SapState (Either Text Board)
+applyEat :: Effect -> Int -> Maybe Int -> Board -> State SapState Board
 applyEat eff from to b = do
   applyEatEffect eff to (over (#shop % #foodShop % #foodShopV) (V.// [(from, Nothing)]) b)
 
-applyEatEffect :: Effect -> Maybe Int -> Board -> State SapState (Either Text Board)
+applyEatEffect :: Effect -> Maybe Int -> Board -> State SapState Board
 applyEatEffect eff to b = case eff of
   ApplyStatus st (Target PurchaseTarget _ _) ->
-    pure $
-    Right
+    pure
     (over (#deck % #deckV)
      (\v -> v V.//
        [(to',
           (set #dpStatus (Just st)) <$> (v V.! to'))
        ]) b)
   ModifyStats ueob (Just (Amount h)) (Just (Amount a)) (Target PurchaseTarget _ _) ->
-    pure $
-    Right
+    pure
     (over (#deck % #deckV)
      (\v -> v V.//
        [(to',
@@ -1036,44 +1036,44 @@ applyEatEffect eff to b = case eff of
   where
     to' = fromMaybe (error "bad from") to
 
-freezePet :: Int -> Board -> Either Text Board
+freezePet :: Int -> Board -> Board
 freezePet i b
-  | isNothing i' = Left ("No ShopPet @ " <> pack (show i))
-  | Just Frozen == (fst <$> i') = Left "Already frozen"
-  | otherwise = Right (over (#shop % #petShop % #petShopV) (\v -> v V.//
+  | isNothing i' = error ("No ShopPet @ " <> show i)
+  | Just Frozen == (fst <$> i') = error "Already frozen"
+  | otherwise = (over (#shop % #petShop % #petShopV) (\v -> v V.//
        [(i,
           (first (const Frozen) <$> (v V.! i)))
        ]) b)
   where
     i' = view (#shop % #petShop % #petShopV) b V.! i
 
-unfreezePet :: Int -> Board -> Either Text Board
+unfreezePet :: Int -> Board -> Board
 unfreezePet i b
-  | isNothing i' = Left ("No ShopPet @ " <> pack (show i))
-  | Just UnFrozen == (fst <$> i') = Left "Not frozen"
-  | otherwise = Right (over (#shop % #petShop % #petShopV) (\v -> v V.//
+  | isNothing i' = error ("No ShopPet @ " <> show i)
+  | Just UnFrozen == (fst <$> i') = error "Not frozen"
+  | otherwise = (over (#shop % #petShop % #petShopV) (\v -> v V.//
        [(i,
           (first (const UnFrozen) <$> (v V.! i)))
        ]) b)
   where
     i' = view (#shop % #petShop % #petShopV) b V.! i
 
-freezeFood :: Int -> Board -> Either Text Board
+freezeFood :: Int -> Board -> Board
 freezeFood i b
-  | isNothing i' = Left ("No Food @ " <> pack (show i))
-  | Just Frozen == (fst <$> i') = Left "Already frozen"
-  | otherwise = Right (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
+  | isNothing i' = error ("No Food @ " <> show i)
+  | Just Frozen == (fst <$> i') = error "Already frozen"
+  | otherwise = (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
        [(i,
           (first (const Frozen) <$> (v V.! i)))
        ]) b)
   where
     i' = view (#shop % #foodShop % #foodShopV) b V.! i
 
-unfreezeFood :: Int -> Board -> Either Text Board
+unfreezeFood :: Int -> Board -> Board
 unfreezeFood i b
-  | isNothing i' = Left ("No Food @ " <> pack (show i))
-  | Just UnFrozen == (fst <$> i') = Left "Not frozen"
-  | otherwise = Right (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
+  | isNothing i' = error ("No Food @ " <> show i)
+  | Just UnFrozen == (fst <$> i') = error "Not frozen"
+  | otherwise = (over (#shop % #foodShop % #foodShopV) (\v -> v V.//
        [(i,
           (first (const UnFrozen) <$> (v V.! i)))
        ]) b)
@@ -1100,7 +1100,7 @@ recruitPet tl b
       p <- pick
       case p of
         Nothing -> pure Nothing
-        Just p' -> either (const Nothing) Just <$> buy p' 0 b
+        Just p' -> Just <$> buy p' 0 b
   where
     pick = matchPT tl (shopPetsI b)
 
@@ -1313,8 +1313,7 @@ fight b = do
   -- KnockOut requires knowledge of the whole Board. applyFEffects needs refactoring.
   -- FIXME:
   -- Does AfterAttack also apply if the pet is already fainted.
-  b4 <- applyFEffects AfterAttack (\k _ -> bool False True (k==0)) b3
-  pure b4
+  applyFEffects AfterAttack (\k _ -> bool False True (k==0)) b3
 
 ah :: Side -> Battle -> Battle
 ah s b = over (bdFront s % #bhealth) (\x -> x - view (bdFront (other s) % #battack) b) b

@@ -1,5 +1,5 @@
 
-* Next SAP R&D
+* SAP R&D
 
 - [X] applying effects
   - [X] StartOfBattle effects
@@ -44,7 +44,11 @@ import qualified Data.Vector as V
 import System.Random
 import Control.Monad.State.Lazy
 import Optics.Extra
+putStrLn "ok"
 #+end_src
+
+#+RESULTS:
+: > > > > > > > > > > > > > > > > > > > > ok
 
 * SapState
 
@@ -1546,15 +1550,9 @@ view #level1Ability $ pets s Map.! "pet-beaver"
 
 #+RESULTS:
 : Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-* Next development loop
+* ToDo development loop
 
-- [X] mozzie hits random pets
-- [X] ant Faint effect
-- [X] zombie cricket summons ok
-- [X] horse on summoned
-- [ ] check otter & horse buy effects
-  - [ ] horse hit itself when bought
-  - [ ] infinite loop
+** random battle using bAlways
 
 #+begin_src haskell :results output
 tl = [["pet-ant","pet-beaver","pet-cricket","pet-duck","pet-fish","pet-horse","pet-mosquito","pet-otter","pet-pig"]] :: [[Sap.Key PetKey]]
@@ -1567,7 +1565,7 @@ prettyShow s (pure b)
 
 #+RESULTS:
 :
-: > > > > ₁🦗₂ ₁🦆₃ ₂🦫₂|₁🦗₂ ₁🦆₃ ₄🐎₁
+: > > > > ₂🐜₁ ₂🐟₃ ₂🐟₃|₂🐟₃ ₂🦫₂ ₂🐟₃
 
 ** startP testing
 #+begin_src haskell :results output
@@ -1657,3 +1655,68 @@ view #level1Ability $ pets s Map.! "pet-horse"
 
 #+RESULTS:
 : Just (Ability {description = "Friend summoned: Give it +1 Attack until end of battle", trigger = Summoned, triggeredBy = Target {targetType = EachFriend, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats True (Just (Amount 1)) Nothing (Target {targetType = TriggeringEntity, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
+
+
+
+* Next Hard-coded Level 1s
+
+- [ ] beaver buy
+  - solo
+  - 2 options to hit
+- [ ] buy with horse (+ 1) in deck
+- [ ] duck, otter, pig sale
+
+#+begin_src haskell :results output
+s <- sapState StandardPack
+s' = flip evalState s
+b = blankBoard (Key "turn-1")
+horse = mkDeckPet (PetShopBoosts 0 0) (Key "pet-horse")
+otter = mkDeckPet (PetShopBoosts 0 0) (Key "pet-otter")
+beaver = mkDeckPet (PetShopBoosts 0 0) (Key "pet-beaver")
+fish = mkDeckPet (PetShopBoosts 0 0) (Key "pet-fish")
+
+toShop ps = foldr ($) (s' b) $ zipWith (\i p -> set (sPet i) (Just (UnFrozen, (s' p)))) [0..] ps
+  pb b = prettyShow s (pure b)
+  p b = prettyShow s b
+  pb (toShop [otter])
+#+end_src
+
+#+RESULTS:
+:
+: > > > > > > > > > > _ _ _ _ _ ₁🦦₂ _ _ _ 🧡₁₀ Turn 1
+
+*** Done otter solo
+
+#+begin_src haskell :results output
+p $ buy 0 0 (toShop [otter])
+#+end_src
+
+#+RESULTS:
+: ₁🦦₂ _ _ _ _ _ _ _ _ 🧡₇ Turn 1
+
+*** otter singleton
+
+#+begin_src haskell :results output
+b = toShop [otter, fish]
+pb b
+b' = buy 1 0 b
+b'' = s' $ recruit 0 0 <$> b'
+pb b''
+#+end_src
+
+#+RESULTS:
+:
+: _ _ _ _ _ ₁🦦₂ ₂🐟₃ _ _ 🧡₁₀ Turn 1
+: > > ₁🦦₂ ₂🐟₃ _ _ _ _ _ _ _ 🧡₄ Turn 1
+
+
+
+*** junk
+
+#+begin_src haskell :results output
+bh = Board {hearts = Hearts {nhearts = 7}, deck = Deck {deckV = V.fromList [Just (DeckPet {deckPet = Key {aKey = "pet-fish"}, attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Just (DeckPet {deckPet = Key {aKey = "pet-fish"}, attack = 2, health = 3, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing,Nothing]}, shop = Shop {petShop = PetShop {petShopV = V.fromList [Just (UnFrozen,DeckPet {deckPet = Key {aKey = "pet-horse"}, attack = 2, health = 1, attackUeob = 0, healthUeob = 0, dpStatus = Nothing}),Nothing,Nothing]}, foodShop = FoodShop {foodShopV = V.fromList [Nothing]}, petShopSize = 3, foodShopSize = 1, petShopBoosts = PetShopBoosts 0 0}, boardTurn = Key {aKey = "turn-1"}}
+slive <- sapState StandardPack
+-- flip evalState slive $ buy 0 2 bh
+prettyShow slive $ fmap (either undefined id) $ buy 0 1 bh
+:t applyBoardEffectsBy Summoned ((==EachFriend) . view #targetType) (\k _ -> k/=1) $ either undefined id (recruit 0 1 bh)
+#+end_src
