@@ -1,5 +1,5 @@
 
-* SAP R&D
+* ToDo SAP R&D :fun:
 
 - [X] applying effects
   - [X] StartOfBattle effects
@@ -1550,7 +1550,7 @@ view #level1Ability $ pets s Map.! "pet-beaver"
 
 #+RESULTS:
 : Just (Ability {description = "Sell: Give two random friends +1 health", trigger = Sell, triggeredBy = Target {targetType = Self, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats False Nothing (Just (Amount 1)) (Target {targetType = RandomFriend, targetN = Just 2, includingFutures = Nothing}), untilEndOfBattle = Nothing})
-* ToDo development loop
+* development loop
 
 ** random battle using bAlways
 
@@ -1657,8 +1657,7 @@ view #level1Ability $ pets s Map.! "pet-horse"
 : Just (Ability {description = "Friend summoned: Give it +1 Attack until end of battle", trigger = Summoned, triggeredBy = Target {targetType = EachFriend, targetN = Nothing, includingFutures = Nothing}, effect = ModifyStats True (Just (Amount 1)) Nothing (Target {targetType = TriggeringEntity, targetN = Nothing, includingFutures = Nothing}), untilEndOfBattle = Nothing})
 
 
-
-* Next Hard-coded Level 1s
+* Hard-coded Level 1s
 
 - [ ] beaver buy
   - solo
